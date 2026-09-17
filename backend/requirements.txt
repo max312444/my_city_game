@@ -4,3 +4,7 @@ sqlalchemy
 aiosqlite
 anthropic
 python-dotenv
+alembic
+pytest
+pytest-asyncio
+httpx

@@ -40,9 +40,6 @@ const speeds = [
 
 <style scoped>
 .clock-panel {
-  position: fixed;
-  top: 16px;
-  right: 16px;
   background: rgba(0, 0, 0, 0.6);
   color: white;
   padding: 12px 16px;
@@ -67,6 +64,8 @@ button {
   background: #333;
   color: white;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 button.active {
   background: #4a90d9;

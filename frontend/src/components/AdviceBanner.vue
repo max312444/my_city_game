@@ -1,32 +1,31 @@
 <script setup>
 import { onMounted, onUnmounted, ref, watch, computed } from 'vue'
 import { useAdviceStore } from '../stores/advice'
+import { useClockStore } from '../stores/clock'
 
 const adviceStore = useAdviceStore()
+const clockStore = useClockStore()
 
-const now = ref(Date.now())
+const secondsLeft = ref(0)
+const totalSeconds = ref(1)
 let intervalId = null
-let dismissed = false
-
-function tick() {
-  now.value = Date.now()
-  if (
-    adviceStore.currentAdvice &&
-    !dismissed &&
-    now.value / 1000 >= adviceStore.currentAdvice.expires_at
-  ) {
-    dismissed = true
-    adviceStore.dismiss()
-  }
-}
 
 watch(
   () => adviceStore.currentAdvice,
   (advice) => {
-    dismissed = false
-    if (advice && !intervalId) {
-      intervalId = setInterval(tick, 200)
-    } else if (!advice && intervalId) {
+    if (advice) {
+      secondsLeft.value = advice.seconds_left
+      totalSeconds.value = advice.total_seconds || 1
+      if (!intervalId) {
+        intervalId = setInterval(() => {
+          // Purely visual: the server is the source of truth and clears
+          // currentAdvice for us once its own (pause-aware) timer hits zero.
+          if (clockStore.speed !== 'paused') {
+            secondsLeft.value = Math.max(0, secondsLeft.value - 0.5)
+          }
+        }, 500)
+      }
+    } else if (intervalId) {
       clearInterval(intervalId)
       intervalId = null
     }
@@ -42,20 +41,14 @@ onUnmounted(() => {
   if (intervalId) clearInterval(intervalId)
 })
 
-const timeLeft = computed(() => {
-  if (!adviceStore.currentAdvice) return 0
-  return Math.max(0, Math.ceil(adviceStore.currentAdvice.expires_at - now.value / 1000))
-})
+const timeLeft = computed(() => Math.ceil(secondsLeft.value))
 
 const timePercent = computed(() => {
-  if (!adviceStore.currentAdvice) return 0
-  const total = adviceStore.currentAdvice.expires_at - adviceStore.currentAdvice.created_at
-  if (!total) return 0
-  return Math.max(0, Math.min(100, (timeLeft.value / total) * 100))
+  if (!totalSeconds.value) return 0
+  return Math.max(0, Math.min(100, (secondsLeft.value / totalSeconds.value) * 100))
 })
 
 function choose(choiceId) {
-  dismissed = true
   adviceStore.choose(choiceId)
 }
 </script>
@@ -67,7 +60,7 @@ function choose(choiceId) {
       <div class="text">
         <div class="title">
           {{ adviceStore.currentAdvice.title }}
-          <span class="timer">{{ timeLeft }}초</span>
+          <span class="timer">{{ timeLeft }}초{{ clockStore.speed === 'paused' ? ' (일시정지)' : '' }}</span>
         </div>
         <div class="description">{{ adviceStore.currentAdvice.description }}</div>
       </div>

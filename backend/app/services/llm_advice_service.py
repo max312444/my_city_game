@@ -1,7 +1,10 @@
+import logging
 import os
 import uuid
 
 from anthropic import AsyncAnthropic
+
+logger = logging.getLogger("my_city.advice")
 
 from app.services.advice_service import get_random_advice
 
@@ -28,7 +31,10 @@ ADVICE_TOOL = {
                         "label": {"type": "string", "description": "선택지 문구 (한국어)"},
                         "effects": {
                             "type": "object",
-                            "description": "이 선택을 골랐을 때 국가 지표 변화량 (-200~200 정수, 지표는 0~1000 범위)",
+                            "description": (
+                                "이 선택을 골랐을 때 국가 지표 변화량 (-8~8 사이 정수의 작은 값만. "
+                                "플레이어는 조언자일 뿐 국가를 직접 좌우하지 않으므로 큰 변화는 절대 주지 말 것)"
+                            ),
                             "properties": {
                                 "economy": {"type": "integer"},
                                 "stability": {"type": "integer"},
@@ -62,7 +68,7 @@ def _clamp_effects(effects: dict) -> dict:
     clamped = {}
     for stat in ("economy", "stability", "military", "education"):
         if stat in effects:
-            clamped[stat] = max(-200, min(200, int(effects[stat])))
+            clamped[stat] = max(-8, min(8, int(effects[stat])))
     return clamped
 
 
@@ -73,7 +79,10 @@ def _build_prompt(nation: dict, current_date: dict) -> str:
         f"군사력: {nation['military']}, 교육: {nation['education']}, 보유 금액: {nation['treasury']}\n\n"
         "이 국가의 군주에게 지금 상황에 맞는 정책 조언 카드를 하나 만들어줘. "
         "선택지 3개는 서로 뚜렷하게 다른 방향(예: 공격적/신중함/현상 유지)이어야 하고, "
-        "국가 상태가 특정 지표에서 위태로우면(예: 안정도가 낮으면) 그걸 반영한 상황을 만들어줘."
+        "국가 상태가 특정 지표에서 위태로우면(예: 안정도가 낮으면) 그걸 반영한 상황을 만들어줘. "
+        "플레이어는 국가를 직접 통치하는 게 아니라 옆에서 조언만 하는 역할이라, "
+        "선택의 효과는 '약간 도움이 됐다' 정도로만 작게 반영되어야 해 (지표 변화 -8~8 사이). "
+        "문구는 극적으로 써도 되지만 실제 수치 효과는 작게 유지해."
     )
 
 
@@ -107,4 +116,5 @@ async def generate_advice(nation: dict, current_date: dict) -> dict:
             ],
         }
     except Exception:
+        logger.exception("LLM advice generation failed, falling back to hardcoded advice")
         return get_random_advice()
