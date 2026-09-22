@@ -1,7 +1,9 @@
 from sqlalchemy import Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.data.national_traits import NATIONAL_TRAIT_IDS
 from app.db import Base
+from app.models.nation import _random_trait
 
 
 class RivalNation(Base):
@@ -19,6 +21,9 @@ class RivalNation(Base):
     personality: Mapped[str] = mapped_column(
         String, default="economic", server_default="economic"
     )  # aggressive | economic | isolationist
+    national_trait: Mapped[str] = mapped_column(
+        String, default=_random_trait, server_default=NATIONAL_TRAIT_IDS[0]
+    )  # military | economic | production | scholarly — stat *growth* specialization
 
     def to_dict(self):
         return {
@@ -30,4 +35,5 @@ class RivalNation(Base):
             "relationship": self.relationship,
             "war_months": self.war_months,
             "personality": self.personality,
+            "national_trait": self.national_trait,
         }

@@ -1,10 +1,12 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useTechStore } from '../stores/tech'
 import { useNationStore } from '../stores/nation'
+import TechTreeOverlay from './TechTreeOverlay.vue'
 
 const techStore = useTechStore()
 const nationStore = useNationStore()
+const showGraph = ref(false)
 
 onMounted(() => {
   techStore.fetchTree()
@@ -35,7 +37,10 @@ const prereqNames = computed(() => (tech) =>
 
 <template>
   <div class="tech-panel panel">
-    <div class="panel-title">테크트리</div>
+    <div class="panel-title-row">
+      <div class="panel-title">테크트리</div>
+      <button class="graph-btn" @click="showGraph = true">🗺 전체 트리</button>
+    </div>
     <div v-if="techStore.error" class="error">{{ techStore.error }}</div>
     <div
       v-for="tech in techStore.tree"
@@ -68,6 +73,7 @@ const prereqNames = computed(() => (tech) =>
       </div>
     </div>
   </div>
+  <TechTreeOverlay v-if="showGraph" @close="showGraph = false" />
 </template>
 
 <style scoped>
@@ -79,6 +85,30 @@ const prereqNames = computed(() => (tech) =>
 .panel-title {
   font-weight: bold;
   margin-bottom: 8px;
+}
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.panel-title-row .panel-title {
+  margin-bottom: 0;
+}
+.graph-btn {
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  font-family: var(--font-body);
+}
+.graph-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .error {
   color: var(--text-negative);

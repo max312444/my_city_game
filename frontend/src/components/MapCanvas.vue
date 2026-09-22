@@ -5,12 +5,16 @@ import { useNationStore } from '../stores/nation'
 import { useDiplomacyStore } from '../stores/diplomacy'
 import { useTerritoryStore } from '../stores/territory'
 import { useCityStore } from '../stores/city'
+import { useBuildingStore } from '../stores/buildings'
+import { useTechStore } from '../stores/tech'
 
 const mapStore = useMapStore()
 const nationStore = useNationStore()
 const diplomacyStore = useDiplomacyStore()
 const territoryStore = useTerritoryStore()
 const cityStore = useCityStore()
+const buildingStore = useBuildingStore()
+const techStore = useTechStore()
 const canvasRef = ref(null)
 
 // Two shades per terrain (low, high) — the noise layer blends between them so
@@ -336,7 +340,27 @@ function hexToRgb(hex) {
 
 const ROOF_COLORS = ['rgba(122,44,34,0.95)', 'rgba(101,58,30,0.95)', 'rgba(140,55,45,0.95)']
 
-function drawCity(ctx, cx, cy, tileSize, tier, color, name, isPlayer, seed) {
+// Era visuals are scoped to the player only — rivals have no tech tree of their own
+// (an existing, documented simplification), so there's no meaningful era to derive
+// for them. `era` is left null for every rival drawCity() call below.
+const ERA_ROOF_COLORS = {
+  primitive: ['rgba(120,84,42,0.95)', 'rgba(102,70,36,0.95)'],
+  bronze: ['rgba(150,108,54,0.95)', 'rgba(128,92,42,0.95)'],
+  iron: ['rgba(90,90,96,0.95)', 'rgba(76,76,82,0.95)'],
+  classical: ROOF_COLORS,
+  medieval: ['rgba(58,78,108,0.95)', 'rgba(70,68,88,0.95)', 'rgba(64,90,96,0.95)'],
+  renaissance: ['rgba(110,70,120,0.95)', 'rgba(150,120,50,0.95)'],
+}
+const ERA_ICON = {
+  primitive: '🔥',
+  bronze: '🪓',
+  iron: '⚒️',
+  classical: '🏛️',
+  medieval: '🏰',
+  renaissance: '🎨',
+}
+
+function drawCity(ctx, cx, cy, tileSize, tier, color, name, isPlayer, seed, era = null) {
   const buildings = [
     [{ w: 0.5, h: 0.4, roof: true }],
     [
@@ -400,7 +424,8 @@ function drawCity(ctx, cx, cy, tileSize, tier, color, name, isPlayer, seed) {
     ctx.strokeRect(bx, by, bw, bh)
 
     if (b.roof) {
-      ctx.fillStyle = ROOF_COLORS[(i + seed) % ROOF_COLORS.length]
+      const roofColors = ERA_ROOF_COLORS[era] || ROOF_COLORS
+      ctx.fillStyle = roofColors[(i + seed) % roofColors.length]
       ctx.beginPath()
       ctx.moveTo(bx - bw * 0.1, by)
       ctx.lineTo(bx + bw / 2, by - bh * 0.5)
@@ -422,7 +447,7 @@ function drawCity(ctx, cx, cy, tileSize, tier, color, name, isPlayer, seed) {
   ctx.textAlign = 'center'
   ctx.shadowColor = 'rgba(0,0,0,0.8)'
   ctx.shadowBlur = 3
-  ctx.fillText(`${TIER_EMOJI[tier]} ${name}`, cx, baseY + scale * 0.4)
+  ctx.fillText(`${era ? ERA_ICON[era] + ' ' : ''}${TIER_EMOJI[tier]} ${name}`, cx, baseY + scale * 0.4)
   ctx.shadowBlur = 0
 }
 
@@ -469,6 +494,8 @@ let cachedTextureKey = ''
 
 const purchasePrompt = ref(null)
 const foundCityPrompt = ref(null)
+const attackPrompt = ref(null)
+const buildingPrompt = ref(null)
 
 function draw() {
   const canvas = canvasRef.value
@@ -541,12 +568,13 @@ function draw() {
     const cx = offsetX + mapStore.capital.x * tileSize + tileSize / 2
     const cy = offsetY + mapStore.capital.y * tileSize + tileSize / 2
     const tier = tierFromTileCount((tilesByOwner.get('player') || []).length)
-    drawCity(ctx, cx, cy, tileSize, tier, PLAYER_COLOR, nationStore.nation.name || '수도', true, 0)
+    drawCity(ctx, cx, cy, tileSize, tier, PLAYER_COLOR, nationStore.nation.name || '수도', true, 0, nationStore.nation.era)
   }
   for (const c of cityStore.cities) {
     const cx = offsetX + c.x * tileSize + tileSize / 2
     const cy = offsetY + c.y * tileSize + tileSize / 2
-    drawCity(ctx, cx, cy, tileSize, 0, colorForOwner(c.owner), c.name, c.owner === 'player', 0)
+    const isPlayerCity = c.owner === 'player'
+    drawCity(ctx, cx, cy, tileSize, 0, colorForOwner(c.owner), c.name, isPlayerCity, 0, isPlayerCity ? nationStore.nation.era : null)
   }
   mapStore.rivalCapitals.forEach((rc, i) => {
     const cx = offsetX + rc.x * tileSize + tileSize / 2
@@ -567,7 +595,7 @@ function draw() {
   })
 
   // highlight the tile currently under a purchase/founding prompt
-  const highlighted = purchasePrompt.value || foundCityPrompt.value
+  const highlighted = purchasePrompt.value || foundCityPrompt.value || attackPrompt.value || buildingPrompt.value
   if (highlighted) {
     const { x, y } = highlighted
     ctx.strokeStyle = '#ffd166'
@@ -596,12 +624,39 @@ function distanceOk(x1, y1, x2, y2, min) {
 
 function handleClick(e) {
   const { tx, ty } = tileFromEvent(e)
+  buildingPrompt.value = null
   if (tx < 0 || tx >= mapStore.width || ty < 0 || ty >= mapStore.height) {
     purchasePrompt.value = null
     foundCityPrompt.value = null
+    attackPrompt.value = null
     return
   }
   const owner = territoryStore.ownerAt(tx, ty)
+
+  if (owner && owner !== 'player') {
+    const rivalCapital = mapStore.rivalCapitals.find((rc) => rc.x === tx && rc.y === ty)
+    const rivalCity = cityStore.cities.find((c) => c.x === tx && c.y === ty && c.owner === owner)
+    const settlement = rivalCapital || rivalCity
+    if (settlement) {
+      purchasePrompt.value = null
+      foundCityPrompt.value = null
+      attackPrompt.value = {
+        x: tx,
+        y: ty,
+        screenX: layout.offsetX + tx * layout.tileSize + layout.tileSize / 2,
+        screenY: layout.offsetY + ty * layout.tileSize,
+        cityName: settlement.name,
+        rivalId: owner,
+        rivalName: rivalNameFor(owner),
+        attacking: false,
+        attackError: '',
+      }
+      draw()
+      return
+    }
+  }
+  attackPrompt.value = null
+
   if (owner === 'player') {
     purchasePrompt.value = null
     const isCapital = mapStore.capital && tx === mapStore.capital.x && ty === mapStore.capital.y
@@ -656,6 +711,58 @@ function handleClick(e) {
   draw()
 }
 
+function handleRightClick(e) {
+  const { tx, ty } = tileFromEvent(e)
+  purchasePrompt.value = null
+  foundCityPrompt.value = null
+  attackPrompt.value = null
+  if (tx < 0 || tx >= mapStore.width || ty < 0 || ty >= mapStore.height) {
+    buildingPrompt.value = null
+    return
+  }
+  // Buildings are a nation-wide queue, not tied to a specific tile (see
+  // building_service.py) — right-clicking any owned tile just opens the same list;
+  // where exactly you clicked only decides where the popup appears.
+  if (territoryStore.ownerAt(tx, ty) !== 'player') {
+    buildingPrompt.value = null
+    return
+  }
+  buildingPrompt.value = {
+    screenX: layout.offsetX + tx * layout.tileSize + layout.tileSize / 2,
+    screenY: layout.offsetY + ty * layout.tileSize,
+    error: '',
+  }
+  draw()
+}
+
+function requiredTechName(techId) {
+  return techStore.tree.find((t) => t.id === techId)?.name || techId
+}
+
+function buildingStatus(building) {
+  if (buildingStore.built.includes(building.id)) return 'done'
+  if (buildingStore.currentBuilding === building.id) return 'active'
+  if (!buildingStore.researched.includes(building.requires_tech)) return 'locked'
+  return 'available'
+}
+
+async function buildFromMap(buildingId) {
+  const p = buildingPrompt.value
+  if (!p) return
+  p.error = ''
+  await buildingStore.build(buildingId)
+  if (buildingStore.error) {
+    p.error = buildingStore.error
+  } else {
+    buildingPrompt.value = null
+  }
+}
+
+function cancelBuilding() {
+  buildingPrompt.value = null
+  draw()
+}
+
 async function confirmPurchase() {
   const p = purchasePrompt.value
   if (!p || p.error) return
@@ -701,6 +808,26 @@ function cancelFoundCity() {
   draw()
 }
 
+async function confirmAttack() {
+  const p = attackPrompt.value
+  if (!p) return
+  p.attacking = true
+  try {
+    await diplomacyStore.attackCity(p.x, p.y)
+    attackPrompt.value = null
+    draw()
+  } catch (err) {
+    p.attackError = err.message
+  } finally {
+    if (attackPrompt.value) attackPrompt.value.attacking = false
+  }
+}
+
+function cancelAttack() {
+  attackPrompt.value = null
+  draw()
+}
+
 function handleResize() {
   draw()
 }
@@ -710,6 +837,8 @@ onMounted(async () => {
   await diplomacyStore.fetchRivals()
   await territoryStore.fetchTerritory()
   await cityStore.fetchCities()
+  await buildingStore.fetchState()
+  await techStore.fetchTree()
   draw()
   window.addEventListener('resize', handleResize)
 })
@@ -725,7 +854,12 @@ watch(() => cityStore.cities, draw, { deep: true })
 </script>
 
 <template>
-  <canvas ref="canvasRef" class="map-canvas" @click="handleClick"></canvas>
+  <canvas
+    ref="canvasRef"
+    class="map-canvas"
+    @click="handleClick"
+    @contextmenu.prevent="handleRightClick"
+  ></canvas>
 
   <div
     v-if="purchasePrompt"
@@ -785,6 +919,57 @@ watch(() => cityStore.cities, draw, { deep: true })
         <button class="popup-btn cancel" @click="cancelFoundCity">취소</button>
       </div>
     </template>
+  </div>
+
+  <div
+    v-if="attackPrompt"
+    class="purchase-popup"
+    :style="{ left: attackPrompt.screenX + 'px', top: attackPrompt.screenY + 'px' }"
+  >
+    <div class="popup-title">도시 공격</div>
+    <div class="popup-attack-target">{{ attackPrompt.rivalName }}의 '{{ attackPrompt.cityName }}'</div>
+    <div v-if="attackPrompt.attackError" class="popup-error">{{ attackPrompt.attackError }}</div>
+    <div class="popup-actions">
+      <button class="popup-btn attack" :disabled="attackPrompt.attacking" @click="confirmAttack">공격</button>
+      <button class="popup-btn cancel" @click="cancelAttack">취소</button>
+    </div>
+  </div>
+
+  <div
+    v-if="buildingPrompt"
+    class="purchase-popup building-popup"
+    :style="{ left: buildingPrompt.screenX + 'px', top: buildingPrompt.screenY + 'px' }"
+  >
+    <div class="popup-title">건물 건설</div>
+    <div v-if="buildingPrompt.error" class="popup-error">{{ buildingPrompt.error }}</div>
+    <div class="building-list">
+      <div
+        v-for="building in buildingStore.buildings"
+        :key="building.id"
+        class="building-row"
+        :class="buildingStatus(building)"
+      >
+        <div class="building-row-name">
+          {{ building.name }}
+          <span v-if="buildingStatus(building) === 'done'" class="badge done-badge">완료</span>
+          <span v-else-if="buildingStatus(building) === 'active'" class="badge active-badge">
+            건설 중 · {{ buildingStore.currentBuildingMonthsLeft }}개월
+          </span>
+        </div>
+        <div v-if="buildingStatus(building) === 'locked'" class="building-row-req">
+          선행 기술: {{ requiredTechName(building.requires_tech) }}
+        </div>
+        <div v-else class="building-row-cost">{{ building.cost }} · {{ building.duration_months }}개월</div>
+        <button
+          v-if="buildingStatus(building) === 'available'"
+          :disabled="!!buildingStore.currentBuilding || nationStore.nation.treasury < building.cost"
+          @click="buildFromMap(building.id)"
+        >
+          건설
+        </button>
+      </div>
+    </div>
+    <button class="popup-btn cancel" @click="cancelBuilding">닫기</button>
   </div>
 </template>
 
@@ -869,8 +1054,97 @@ watch(() => cityStore.cities, draw, { deep: true })
   border-color: var(--accent);
   color: var(--accent-strong);
 }
+.popup-btn.attack {
+  background: rgba(226, 104, 90, 0.18);
+  border-color: var(--text-negative);
+  color: var(--text-negative);
+}
 .popup-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.popup-attack-target {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-align: center;
+}
+.building-popup {
+  width: 240px;
+}
+.building-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.building-row {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--panel-border-soft);
+  border-radius: 6px;
+  padding: 7px 8px;
+  margin-bottom: 6px;
+  text-align: left;
+}
+.building-row.done {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.building-row.locked {
+  opacity: 0.5;
+}
+.building-row.active {
+  border-color: var(--accent-strong);
+  background: rgba(255, 209, 102, 0.12);
+}
+.building-row-name {
+  font-weight: bold;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.building-row-req,
+.building-row-cost {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+.building-row button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font-body);
+}
+.building-row button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.building-row button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.badge.done-badge {
+  font-size: 10px;
+  background: var(--accent);
+  color: #241d12;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: normal;
+}
+.badge.active-badge {
+  font-size: 10px;
+  background: var(--accent-strong);
+  color: #241d12;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: normal;
+  white-space: nowrap;
 }
 </style>

@@ -10,11 +10,15 @@ import EventToast from './components/EventToast.vue'
 import GreatPersonToast from './components/GreatPersonToast.vue'
 import LeftDrawer from './components/LeftDrawer.vue'
 import MapCanvas from './components/MapCanvas.vue'
+import PeaceOfferPopup from './components/PeaceOfferPopup.vue'
+import VictoryScreen from './components/VictoryScreen.vue'
 import { useSessionStore } from './stores/session'
 import { useNationStore } from './stores/nation'
+import { useDiplomacyStore } from './stores/diplomacy'
 
 const sessionStore = useSessionStore()
 const nationStore = useNationStore()
+const diplomacyStore = useDiplomacyStore()
 
 const nationLoaded = ref(false)
 
@@ -35,6 +39,10 @@ watch(
 const needsName = computed(
   () => nationLoaded.value && nationStore.nation.name === sessionStore.sessionId,
 )
+
+const gameWon = computed(
+  () => diplomacyStore.rivals.length > 0 && diplomacyStore.rivals.every((r) => r.relationship === 'defeated'),
+)
 </script>
 
 <template>
@@ -52,6 +60,8 @@ const needsName = computed(
       <AdviceBanner />
       <EventToast />
       <GreatPersonToast />
+      <PeaceOfferPopup />
+      <VictoryScreen v-if="gameWon" />
     </template>
   </div>
 </template>

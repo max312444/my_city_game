@@ -8,6 +8,9 @@ import { useGreatPeopleStore } from './greatPeople'
 import { useDiplomacyStore } from './diplomacy'
 import { useTerritoryStore } from './territory'
 import { useCityStore } from './city'
+import { useBuildingStore } from './buildings'
+import { useWonderStore } from './wonders'
+import { useTradeStore } from './trade'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -57,6 +60,14 @@ export const useClockStore = defineStore('clock', {
           if (tech.currentResearch) {
             tech.currentResearchMonthsLeft = Math.max(0, tech.currentResearchMonthsLeft - 1)
           }
+          const buildings = useBuildingStore()
+          if (buildings.currentBuilding) {
+            buildings.currentBuildingMonthsLeft = Math.max(0, buildings.currentBuildingMonthsLeft - 1)
+          }
+          const wonders = useWonderStore()
+          if (wonders.currentWonder) {
+            wonders.currentWonderMonthsLeft = Math.max(0, wonders.currentWonderMonthsLeft - 1)
+          }
         } else if (message.event_type === 'nation_updated') {
           useNationStore().applyUpdate(message.payload.nation)
         } else if (message.event_type === 'advice_available') {
@@ -69,13 +80,21 @@ export const useClockStore = defineStore('clock', {
           useGreatPeopleStore().onAppeared(message.payload.person, message.payload.current_date)
         } else if (message.event_type === 'rivals_updated') {
           useDiplomacyStore().updateRivals(message.payload.rivals)
+          useTradeStore().fetchState() // route income/eligibility depends on rival stats+relationship
         } else if (message.event_type === 'war_report') {
           useDiplomacyStore().showReports(message.payload.reports)
           useDiplomacyStore().fetchWorldRelationships()
+          useDiplomacyStore().fetchRivals() // re-syncs siege_target_name (set/cleared server-side)
         } else if (message.event_type === 'territory_updated') {
           useTerritoryStore().updateAll(message.payload.all)
         } else if (message.event_type === 'cities_updated') {
           useCityStore().updateCities(message.payload.cities)
+        } else if (message.event_type === 'peace_offer_available') {
+          useDiplomacyStore().setPeaceOffer(message.payload.offer)
+        } else if (message.event_type === 'building_completed') {
+          useBuildingStore().onBuildingCompleted(message.payload.building_id)
+        } else if (message.event_type === 'wonder_completed') {
+          useWonderStore().onWonderCompleted(message.payload)
         }
       }
     },

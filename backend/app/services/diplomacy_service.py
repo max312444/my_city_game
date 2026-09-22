@@ -3,6 +3,7 @@ import random
 
 from sqlalchemy import select
 
+from app.data.national_traits import NATIONAL_TRAITS
 from app.data.rivals import PERSONALITY_TRAITS, RIVAL_TEMPLATES
 from app.db import async_session_maker
 from app.models.rival_nation import RivalNation
@@ -22,13 +23,15 @@ WAR_UPKEEP_PER_MILITARY = 0.2
 RIVAL_AGGRESSION_CHANCE_BASE = 0.01
 RIVAL_AGGRESSION_CHANCE_CAP = 0.05
 
-# The longer a war drags on, the harder it gets to sustain (extra stability bleed on
-# both sides) and the more likely it just ends in a tired peace on its own — so no
-# war can grind on forever unresolved even if the player never intervenes.
+# The longer a war against the player drags on, the harder it gets to sustain (extra
+# stability bleed on both sides) and the more likely the *rival* sends a peace offer
+# on its own — but it never ends the war outright by itself anymore. The player has to
+# actually accept it (see Session.pending_peace_offer in session_manager) — a war that
+# just vanishes with no notice read as a bug, not a feature.
 WAR_EXHAUSTION_STABILITY_RATE = 0.005
 WAR_EXHAUSTION_MONTHS_CAP = 12
-WAR_EXHAUSTION_PEACE_CHANCE_PER_MONTH = 0.02
-WAR_EXHAUSTION_PEACE_CHANCE_CAP = 0.3
+WAR_EXHAUSTION_PEACE_OFFER_CHANCE_PER_MONTH = 0.02
+WAR_EXHAUSTION_PEACE_OFFER_CHANCE_CAP = 0.3
 
 # Rivals also act on each other, independent of the player — the "다른 국가들도 각자
 # 성향에 따라 완전 자율로 발전한다" part of the original design brief.
@@ -120,7 +123,8 @@ async def propose_peace(session_id: str, rival_id: str):
 
 
 async def advance_rivals(session_id: str, current_date: dict):
-    """Called once per month tick. Returns (nation, rivals, reports, war_outcomes).
+    """Called once per month tick. Returns (nation, rivals, reports, war_outcomes,
+    peace_offers).
 
     Stays deliberately ignorant of the map/territory — that would need importing
     map_service and territory_service here, and map_service already imports
@@ -134,6 +138,7 @@ async def advance_rivals(session_id: str, current_date: dict):
         rivals = await _get_rivals(db, session_id)
         reports = []
         war_outcomes = []  # (winner_owner, loser_owner, rival_name) — resolved into tile captures below
+        peace_offers = []  # [{"rival_id", "rival_name"}] — session_manager turns these into a popup
 
         # Who's allied with whom, and who's already fighting the player this month —
         # both needed for the mutual-defense check below (a rival can be dragged into
@@ -152,9 +157,12 @@ async def advance_rivals(session_id: str, current_date: dict):
             if rival.relationship == "defeated":
                 continue  # a fallen nation is out of the game — its stats stay frozen
 
+            trait_growth = NATIONAL_TRAITS.get(rival.national_trait, {}).get("growth", {})
             for stat in ("economy", "stability", "military"):
                 value = getattr(rival, stat)
                 delta = random.uniform(-4, 6)
+                if delta > 0:
+                    delta *= trait_growth.get(stat, 1.0)
                 setattr(rival, stat, max(0.0, min(STAT_MAX, value + delta)))
 
             if rival.relationship == "war":
@@ -171,14 +179,14 @@ async def advance_rivals(session_id: str, current_date: dict):
                     0.0, rival.stability - rival.stability * WAR_EXHAUSTION_STABILITY_RATE * exhaustion
                 )
 
-                peace_chance = min(
-                    WAR_EXHAUSTION_PEACE_CHANCE_CAP, rival.war_months * WAR_EXHAUSTION_PEACE_CHANCE_PER_MONTH
+                offer_chance = min(
+                    WAR_EXHAUSTION_PEACE_OFFER_CHANCE_CAP,
+                    rival.war_months * WAR_EXHAUSTION_PEACE_OFFER_CHANCE_PER_MONTH,
                 )
-                if random.random() < peace_chance:
-                    rival.relationship = "peace"
-                    rival.war_months = 0
-                    reports.append(f"{rival.name}과(와) 장기전 끝에 지쳐 평화 협정을 맺었습니다.")
-                    continue  # the war ended before any combat happened this month
+                if random.random() < offer_chance:
+                    peace_offers.append({"rival_id": rival.rival_id, "rival_name": rival.name})
+                    reports.append(f"{rival.name}이(가) 장기전에 지쳐 평화 협정을 제안했습니다.")
+                    continue  # no combat this month while the offer is on the table
 
                 player_power = nation.military * random.uniform(0.8, 1.2)
                 rival_power = rival.military * random.uniform(0.8, 1.2)
@@ -235,7 +243,23 @@ async def advance_rivals(session_id: str, current_date: dict):
         await db.refresh(nation)
         rival_dicts = [r.to_dict() for r in rivals]
 
-    return nation, rival_dicts, reports, war_outcomes
+    return nation, rival_dicts, reports, war_outcomes, peace_offers
+
+
+async def accept_peace_offer(session_id: str, rival_id: str):
+    """The rival is the one who proposed this (see the war-exhaustion offer above), so
+    unlike propose_peace (player-initiated, rival decides) accepting it is unconditional
+    — the player is just saying yes to what was already offered."""
+    async with async_session_maker() as db:
+        rivals = await _get_rivals(db, session_id)
+        rival = next((r for r in rivals if r.rival_id == rival_id), None)
+        if rival is None:
+            raise DiplomacyError("알 수 없는 국가입니다")
+        if rival.relationship == "war":
+            rival.relationship = "peace"
+            rival.war_months = 0
+        await db.commit()
+        return [r.to_dict() for r in rivals]
 
 
 async def delete_world_data(session_id: str) -> None:

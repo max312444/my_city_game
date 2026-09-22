@@ -3,6 +3,7 @@ import random
 
 from sqlalchemy import select
 
+from app.data.national_traits import NATIONAL_TRAITS
 from app.db import async_session_maker
 from app.models.nation import (
     CITY_ECONOMY_BONUS_PER_CITY,
@@ -93,11 +94,14 @@ async def advance_nation(
         city_bonus = 1 + CITY_ECONOMY_BONUS_PER_CITY * city_count
 
         pop_factor = population_factor(nation.population)
+        trait_growth = NATIONAL_TRAITS.get(nation.national_trait, {}).get("growth", {})
         for stat in STATS:
             value = getattr(nation, stat)
             delta = random.uniform(-4, 6) + resource_bonus.get(stat, 0.0)
             if stat in ("economy", "military") and delta > 0:
                 delta *= pop_factor
+            if delta > 0:
+                delta *= trait_growth.get(stat, 1.0)
             setattr(nation, stat, _apply_delta(value, delta))
 
         # Food surplus/deficit drives population growth (Civ-style): a fed, uncrowded

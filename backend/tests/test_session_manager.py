@@ -35,8 +35,38 @@ async def test_resolve_territory_changes_no_war_no_capture(session_id):
         session_id, rivals, [], [], {"year": 1, "month": 1}
     )
     assert reports == []
-    assert changed is False  # 0 economy -> 0% expansion chance, and no war outcomes to resolve
+    assert changed is False  # 0 economy, 0 player_economy -> 0% expansion chance either way
     assert cities_changed is False  # no rival owns anywhere near enough tiles yet
+
+
+async def test_resolve_territory_changes_auto_expands_player_territory(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    await map_service.get_or_create_map(session_id)
+    before = await territory_service.get_owned_tiles(session_id)
+
+    monkeypatch.setattr(session_manager.random, "random", lambda: 0.0)  # clears the player's expansion roll
+
+    _, changed, _ = await session_manager._resolve_territory_changes(
+        session_id, [], [], [], {"year": 1, "month": 1}, player_economy=500.0
+    )
+    assert changed is True
+    after = await territory_service.get_owned_tiles(session_id)
+    assert len(after) == len(before) + 1
+
+
+async def test_resolve_territory_changes_player_never_auto_expands_at_zero_economy(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    await map_service.get_or_create_map(session_id)
+    before = await territory_service.get_owned_tiles(session_id)
+
+    monkeypatch.setattr(session_manager.random, "random", lambda: 0.0)
+
+    _, changed, _ = await session_manager._resolve_territory_changes(
+        session_id, [], [], [], {"year": 1, "month": 1}, player_economy=0.0
+    )
+    assert changed is False
+    after = await territory_service.get_owned_tiles(session_id)
+    assert len(after) == len(before)
 
 
 async def test_resolve_territory_changes_reports_and_broadcasts_capture(session_id):
@@ -55,6 +85,89 @@ async def test_resolve_territory_changes_reports_and_broadcasts_capture(session_
 
     assert changed is True
     assert any("테스트라이벌" in r and "점령" in r for r in reports)
+
+
+async def test_resolve_territory_changes_captures_a_city_on_the_captured_tile(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    await territory_service.ensure_initial_territory(session_id, 10, 10)  # owns x:9-11,y:9-11
+    await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 13, 10)  # owns x:12-14,y:9-11
+    async with async_session_maker() as db:
+        from app.models.city import City
+
+        db.add(
+            City(
+                session_id=session_id,
+                name="언덕마을",
+                x=12,
+                y=11,
+                owner="eastern_tribes",
+                founded_year=1,
+                founded_month=1,
+            )
+        )
+        await db.commit()
+
+    war_outcomes = [("player", "eastern_tribes", "동쪽 부족 연맹")]
+    siege_targets = {"eastern_tribes": (12, 11)}
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, [], war_outcomes, [], {"year": 1, "month": 1}, siege_targets=siege_targets
+    )
+
+    assert changed is True
+    assert cities_changed is True
+    assert any("언덕마을" in r and "점령" in r for r in reports)
+    city = (await city_service.get_cities(session_id))[0]
+    assert city["owner"] == "player"
+    assert "eastern_tribes" not in siege_targets  # objective reached, cleared automatically
+
+
+async def test_resolve_territory_changes_falls_back_when_siege_target_unreachable(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    await territory_service.ensure_initial_territory(session_id, 10, 10)
+    await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 13, 10)
+
+    war_outcomes = [("player", "eastern_tribes", "동쪽 부족 연맹")]
+    siege_targets = {"eastern_tribes": (999, 999)}  # nowhere near a valid candidate
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, [], war_outcomes, [], {"year": 1, "month": 1}, siege_targets=siege_targets
+    )
+
+    assert changed is True  # still captures a random border tile instead of doing nothing
+    assert siege_targets["eastern_tribes"] == (999, 999)  # unreached target stays put
+
+
+async def test_resolve_territory_changes_transfers_a_captured_city_in_a_world_war(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 10, 10)  # owns x9-11,y9-11
+    async with async_session_maker() as db:
+        from app.models.city import City
+
+        # northern_kingdom gets exactly two tiles: (12, 11) — adjacent to eastern's
+        # block and where its city sits — and a far-away decoy that's NOT adjacent, so
+        # (12, 11) is the only valid capture candidate (deterministic) while still
+        # keeping northern_kingdom above the 1-tile "last stand" elimination threshold
+        # (this test is about the city-transfer message, not elimination).
+        db.add(OwnedTile(session_id=session_id, x=12, y=11, owner="northern_kingdom"))
+        db.add(OwnedTile(session_id=session_id, x=50, y=50, owner="northern_kingdom"))
+        db.add(
+            City(
+                session_id=session_id,
+                name="변경진",
+                x=12,
+                y=11,
+                owner="northern_kingdom",
+                founded_year=1,
+                founded_month=1,
+            )
+        )
+        await db.commit()
+
+    world_war_outcomes = [("eastern_tribes", "northern_kingdom", "동쪽 부족 연맹", "북방 왕국")]
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, [], [], world_war_outcomes, {"year": 1, "month": 1}
+    )
+    assert cities_changed is True
+    assert any("변경진" in r for r in reports)
 
 
 async def test_resolve_territory_changes_handles_world_war_outcomes(session_id):

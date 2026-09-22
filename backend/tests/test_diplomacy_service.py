@@ -62,13 +62,14 @@ async def test_advance_rivals_runs_and_returns_expected_shape(session_id):
     await nation_service.get_or_create_nation(session_id)
     await diplomacy_service.get_rivals(session_id)
 
-    nation, rivals, reports, war_outcomes = await diplomacy_service.advance_rivals(
+    nation, rivals, reports, war_outcomes, peace_offers = await diplomacy_service.advance_rivals(
         session_id, {"year": 1, "month": 2}
     )
     assert len(rivals) == 3
     assert isinstance(reports, list)
     # Not at war with anyone yet, so no combat outcomes to resolve into tile captures.
     assert war_outcomes == []
+    assert peace_offers == []
 
 
 async def test_advance_rivals_at_war_charges_upkeep_and_reports_result(session_id):
@@ -77,7 +78,7 @@ async def test_advance_rivals_at_war_charges_upkeep_and_reports_result(session_i
     await diplomacy_service.declare_war(session_id, "eastern_tribes")
     await _set_military(session_id, 500.0)  # overwhelming military so the outcome is deterministic-ish
 
-    nation, rivals, reports, war_outcomes = await diplomacy_service.advance_rivals(
+    nation, rivals, reports, war_outcomes, _ = await diplomacy_service.advance_rivals(
         session_id, {"year": 1, "month": 2}
     )
     assert any("전투" in r for r in reports)
@@ -99,7 +100,7 @@ async def test_war_months_increments_each_month_at_war(session_id, monkeypatch):
     monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.99)
 
     for month in range(1, 4):
-        nation, rivals, reports, _ = await diplomacy_service.advance_rivals(
+        nation, rivals, reports, _, _ = await diplomacy_service.advance_rivals(
             session_id, {"year": 1, "month": month}
         )
         target = next(r for r in rivals if r["rival_id"] == "eastern_tribes")
@@ -107,7 +108,7 @@ async def test_war_months_increments_each_month_at_war(session_id, monkeypatch):
         assert target["relationship"] == "war"
 
 
-async def test_war_exhaustion_can_end_a_long_war_in_peace(session_id, monkeypatch):
+async def test_war_exhaustion_sends_a_peace_offer_instead_of_ending_the_war_outright(session_id, monkeypatch):
     await nation_service.get_or_create_nation(session_id)
     await diplomacy_service.get_rivals(session_id)
     await diplomacy_service.declare_war(session_id, "eastern_tribes")
@@ -116,14 +117,54 @@ async def test_war_exhaustion_can_end_a_long_war_in_peace(session_id, monkeypatc
     # things about eastern_tribes specifically.
     monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.0)
 
-    nation, rivals, reports, war_outcomes = await diplomacy_service.advance_rivals(
+    nation, rivals, reports, war_outcomes, peace_offers = await diplomacy_service.advance_rivals(
         session_id, {"year": 1, "month": 2}
     )
     target = next(r for r in rivals if r["rival_id"] == "eastern_tribes")
+    # The war does NOT end on its own anymore — it stays "war" until the player
+    # actually accepts the offer (see accept_peace_offer / session_manager).
+    assert target["relationship"] == "war"
+    assert peace_offers == [{"rival_id": "eastern_tribes", "rival_name": "동쪽 부족 연맹"}]
+    assert any("평화 협정을 제안" in r for r in reports)
+    assert ("player", "eastern_tribes", "동쪽 부족 연맹") not in war_outcomes  # offer pre-empted combat
+
+
+async def test_accept_peace_offer_ends_the_war(session_id):
+    await diplomacy_service.get_rivals(session_id)
+    await diplomacy_service.declare_war(session_id, "eastern_tribes")
+
+    rivals = await diplomacy_service.accept_peace_offer(session_id, "eastern_tribes")
+    target = next(r for r in rivals if r["rival_id"] == "eastern_tribes")
     assert target["relationship"] == "peace"
     assert target["war_months"] == 0
-    assert any("지쳐 평화" in r for r in reports)
-    assert ("player", "eastern_tribes", "동쪽 부족 연맹") not in war_outcomes  # peace pre-empted combat
+
+
+async def test_accept_peace_offer_on_unknown_rival_raises(session_id):
+    await diplomacy_service.get_rivals(session_id)
+    with pytest.raises(diplomacy_service.DiplomacyError):
+        await diplomacy_service.accept_peace_offer(session_id, "not_a_real_rival")
+
+
+async def test_rival_national_trait_boosts_its_matching_stat_growth(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    await diplomacy_service.get_rivals(session_id)
+    monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: 5.0)  # pin the base roll positive
+    monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.99)  # never trigger any war/aggression roll
+
+    async with async_session_maker() as db:
+        rivals = await diplomacy_service._get_rivals(db, session_id)
+        et = next(r for r in rivals if r.rival_id == "eastern_tribes")
+        nk = next(r for r in rivals if r.rival_id == "northern_kingdom")
+        et.military, et.national_trait = 100.0, "military"
+        nk.military, nk.national_trait = 100.0, "economic"
+        await db.commit()
+
+    _, rivals, _, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    eastern = next(r for r in rivals if r["rival_id"] == "eastern_tribes")
+    northern = next(r for r in rivals if r["rival_id"] == "northern_kingdom")
+    # Same starting military (100), same pinned +5 base roll — military-trait eastern
+    # should out-grow economic-trait northern on the military stat specifically.
+    assert eastern["military"] > northern["military"]
 
 
 async def test_rival_can_declare_war_on_the_player_when_much_stronger(session_id, monkeypatch):
@@ -138,7 +179,7 @@ async def test_rival_can_declare_war_on_the_player_when_much_stronger(session_id
 
     monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.0)  # always clears the aggression roll
 
-    nation, rivals, reports, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    nation, rivals, reports, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
     assert all(r["relationship"] == "war" for r in rivals)
     assert any("선전포고" in r for r in reports)
 
@@ -159,7 +200,7 @@ async def test_rival_never_declares_war_unprompted_when_much_weaker(session_id, 
     # drifting upward before the aggression check runs.
     monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: a)
 
-    nation, rivals, reports, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    nation, rivals, reports, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
     assert all(r["relationship"] == "peace" for r in rivals)
     assert not any("선전포고" in r for r in reports)
 
@@ -223,7 +264,7 @@ async def test_aggressive_personality_raises_effective_aggression_chance(session
     monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.01)
     monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: a)  # pin stat drift
 
-    nation, rivals, reports, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    nation, rivals, reports, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
     eastern = next(r for r in rivals if r["rival_id"] == "eastern_tribes")  # aggressive
     southern = next(r for r in rivals if r["rival_id"] == "southern_city_state")  # isolationist
     assert eastern["relationship"] == "war"
@@ -282,7 +323,7 @@ async def test_mutual_defense_pulls_an_ally_into_the_players_war(session_id, mon
     monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.0)  # clears any positive chance
     monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: a)
 
-    nation, rivals, reports, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    nation, rivals, reports, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
     northern = next(r for r in rivals if r["rival_id"] == "northern_kingdom")
     assert northern["relationship"] == "war"
     assert any("동맹국을 지키기 위해 참전" in r for r in reports)
@@ -300,7 +341,7 @@ async def test_mutual_defense_never_triggers_without_an_allied_war(session_id, m
     # enough to clear nothing so only the (absent) mutual-defense path is exercised.
     monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.999)
 
-    nation, rivals, reports, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    nation, rivals, reports, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
     northern = next(r for r in rivals if r["rival_id"] == "northern_kingdom")
     assert northern["relationship"] == "peace"
     assert not any("동맹국을 지키기 위해 참전" in r for r in reports)

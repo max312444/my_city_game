@@ -6,7 +6,9 @@ from app.db import async_session_maker
 from app.models.great_person import GreatPersonAppearance
 from app.services.nation_service import apply_random_event
 
-GREAT_PERSON_CHANCE_PER_MONTH = 0.03
+# Lowered from 0.03 after player feedback that they showed up too often — same
+# "gets rarer over playtesting" tuning direction as disaster events (4%→2%→1%).
+GREAT_PERSON_CHANCE_PER_MONTH = 0.012
 
 GREAT_PEOPLE = [
     {

@@ -1,8 +1,12 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import { useSessionStore } from '../stores/session'
+
+const API_BASE = 'http://localhost:8000'
 
 const authStore = useAuthStore()
+const sessionStore = useSessionStore()
 const mode = ref('login') // 'login' | 'signup'
 
 const username = ref('')
@@ -11,6 +15,11 @@ const displayName = ref('')
 const usernameStatus = ref(null) // null | 'checking' | 'available' | 'taken'
 const error = ref('')
 const loading = ref(false)
+
+// Set once login succeeds for an account that already has a save — shows the
+// "이어하기 / 새로 만들기" choice instead of jumping straight back into the old game.
+const awaitingChoice = ref(null)
+const startingNew = ref(false)
 
 watch(username, () => {
   usernameStatus.value = null
@@ -38,9 +47,18 @@ async function submit() {
   loading.value = true
   try {
     if (mode.value === 'signup') {
+      // A brand-new account has nothing to "continue" — straight into the game,
+      // same as before (signup() itself sets the session id).
       await authStore.signup(username.value.trim(), password.value, displayName.value.trim())
     } else {
-      await authStore.login(username.value.trim(), password.value)
+      const uname = await authStore.login(username.value.trim(), password.value)
+      const res = await fetch(`${API_BASE}/api/session/${uname}/exists`)
+      const data = await res.json()
+      if (data.exists) {
+        awaitingChoice.value = uname
+      } else {
+        sessionStore.setSessionId(uname) // never played before — nothing to choose between
+      }
     }
   } catch (e) {
     error.value = e.message
@@ -48,11 +66,39 @@ async function submit() {
     loading.value = false
   }
 }
+
+function continueGame() {
+  sessionStore.setSessionId(awaitingChoice.value)
+}
+
+async function startNew() {
+  const confirmed = window.confirm('기존의 데이터가 모두 사라집니다. 새로 시작하시겠습니까?')
+  if (!confirmed) return
+  startingNew.value = true
+  try {
+    await fetch(`${API_BASE}/api/session/${awaitingChoice.value}`, { method: 'DELETE' })
+    sessionStore.setSessionId(awaitingChoice.value)
+  } finally {
+    startingNew.value = false
+  }
+}
 </script>
 
 <template>
   <div class="login-screen">
-    <div class="card">
+    <div v-if="awaitingChoice" class="card">
+      <div class="brand">
+        <div class="brand-icon">👑</div>
+        <div class="brand-name">Regnum</div>
+        <div class="brand-tagline">{{ awaitingChoice }}님, 어떻게 시작할까요?</div>
+      </div>
+      <div class="choice-actions">
+        <button class="submit-btn" @click="continueGame">이어하기</button>
+        <button class="new-game-btn" :disabled="startingNew" @click="startNew">새로 만들기</button>
+      </div>
+    </div>
+
+    <div v-else class="card">
       <div class="brand">
         <div class="brand-icon">👑</div>
         <div class="brand-name">Regnum</div>
@@ -247,5 +293,28 @@ async function submit() {
 }
 .submit-btn:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+.choice-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.new-game-btn {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.new-game-btn:hover:not(:disabled) {
+  border-color: var(--text-negative);
+  color: var(--text-negative);
+}
+.new-game-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

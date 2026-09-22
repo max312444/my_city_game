@@ -21,7 +21,9 @@ from app.models import (  # noqa: E402,F401
     rival_nation,
     rival_relationship,
     territory,
+    trade,
     user,
+    wonder,
 )
 
 # this is the Alembic Config object, which provides

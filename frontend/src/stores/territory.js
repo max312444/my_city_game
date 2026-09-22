@@ -3,8 +3,11 @@ import { useSessionStore } from './session'
 import { useNationStore } from './nation'
 
 const API_BASE = 'http://localhost:8000'
-const TILE_BASE_COST = 80
-const TILE_COST_GROWTH = 12
+// Mirrors territory_service.compute_cost on the backend — used only for the
+// pre-purchase popup preview, the real charge always comes from the server.
+const TILE_BASE_COST = 100
+const TILE_COST_LINEAR = 20
+const TILE_COST_QUADRATIC = 1.0
 
 function playerTilesFrom(allTiles) {
   return allTiles.filter((t) => t.owner === 'player').map((t) => ({ x: t.x, y: t.y }))
@@ -38,7 +41,8 @@ export const useTerritoryStore = defineStore('territory', {
       return this.tiles.some((t) => Math.abs(t.x - x) <= 1 && Math.abs(t.y - y) <= 1)
     },
     estimatedCost() {
-      return TILE_BASE_COST + TILE_COST_GROWTH * this.tiles.length
+      const n = this.tiles.length
+      return TILE_BASE_COST + TILE_COST_LINEAR * n + TILE_COST_QUADRATIC * n * n
     },
     async purchase(x, y) {
       const sessionId = useSessionStore().sessionId

@@ -30,6 +30,8 @@ const LOG_ICONS = {
   war: '⚔️',
   world: '🌍',
   city: '🏛️',
+  building: '🏗️',
+  wonder: '🗿',
 }
 
 function toggle() {

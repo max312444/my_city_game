@@ -6,8 +6,14 @@ from app.db import async_session_maker
 from app.models.territory import OwnedTile
 from app.services.nation_service import _get_or_create_nation
 
-TILE_BASE_COST = 80
-TILE_COST_GROWTH = 12
+# Raised after player feedback that buying up land was too easy/cheap even at scale
+# — the old flat linear growth (80 + 12*owned) barely outpaced a growing treasury.
+# Now grows with a quadratic term too, so the *marginal* tile gets noticeably more
+# expensive the more you already own (early expansion stays roughly as affordable as
+# before; buying up dozens of tiles gets genuinely expensive).
+TILE_BASE_COST = 100
+TILE_COST_LINEAR = 20
+TILE_COST_QUADRATIC = 1.0
 PLAYER_OWNER = "player"
 
 
@@ -59,6 +65,15 @@ async def get_all_tiles(session_id: str) -> list[dict]:
         return [{"x": t.x, "y": t.y, "owner": t.owner} for t in owned]
 
 
+async def owner_at(session_id: str, x: int, y: int) -> str | None:
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(OwnedTile).where(OwnedTile.session_id == session_id, OwnedTile.x == x, OwnedTile.y == y)
+        )
+        tile = result.scalar_one_or_none()
+        return tile.owner if tile else None
+
+
 async def delete_territory(session_id: str) -> None:
     async with async_session_maker() as db:
         for tile in await _get_owned(db, session_id):
@@ -67,7 +82,7 @@ async def delete_territory(session_id: str) -> None:
 
 
 def compute_cost(owned_count: int) -> float:
-    return TILE_BASE_COST + TILE_COST_GROWTH * owned_count
+    return TILE_BASE_COST + TILE_COST_LINEAR * owned_count + TILE_COST_QUADRATIC * owned_count**2
 
 
 async def purchase_tile(session_id: str, x: int, y: int, terrain: str):
@@ -137,6 +152,7 @@ async def capture_tile(
     loser: str,
     protected_tiles: set[tuple[int, int]],
     allow_elimination: bool = False,
+    preferred_tile: tuple[int, int] | None = None,
 ) -> dict | None:
     """War outcome: the winner seizes one of the loser's border tiles that touches the
     winner's own territory — an invasion has to come from a shared border. Capital tiles
@@ -144,7 +160,12 @@ async def capture_tile(
     `allow_elimination` is set AND the loser is already down to that one last tile, in
     which case it falls too and the loser is wiped out. Callers only ever pass
     allow_elimination=True when the loser is a rival, never the player — rivals can
-    fall in this game, the player never can (see diplomacy_service docs)."""
+    fall in this game, the player never can (see diplomacy_service docs).
+
+    `preferred_tile` is the player's current siege target (see diplomacy attack-city
+    flow) — if it's among this month's valid candidates, the capture lands there
+    instead of a random border tile; otherwise this falls back to random exactly like
+    before, so an out-of-reach target just means "not yet", not an error."""
     async with async_session_maker() as db:
         all_owned = await _get_owned(db, session_id)
         winner_tiles = {(t.x, t.y) for t in all_owned if t.owner == winner}
@@ -160,7 +181,11 @@ async def capture_tile(
         if not candidates:
             return None
 
-        target = random.choice(candidates)
+        target = None
+        if preferred_tile is not None:
+            target = next((t for t in candidates if (t.x, t.y) == preferred_tile), None)
+        if target is None:
+            target = random.choice(candidates)
         target.owner = winner
         await db.commit()
         return {"x": target.x, "y": target.y, "eliminated": last_stand}

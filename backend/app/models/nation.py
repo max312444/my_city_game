@@ -4,6 +4,7 @@ import random
 from sqlalchemy import Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.data.national_traits import NATIONAL_TRAIT_IDS
 from app.db import Base
 
 INCOME_PER_ECONOMY_POINT = 5
@@ -43,6 +44,31 @@ def _initial_stat() -> float:
     return random.uniform(5, 10)
 
 
+def _random_trait() -> str:
+    return random.choice(NATIONAL_TRAIT_IDS)
+
+
+# Era is derived from how many techs have been researched, not stored directly — it's
+# purely a display/visual concept (city art style, era label), never a stat multiplier,
+# so it never needs a migration when the tech tree grows. Named after how far through
+# the 20-node tech tree the nation has gotten (6/3/6/5 techs per tier) instead of just
+# 3 flat buckets, so the name actually keeps changing as the nation develops.
+ERA_THRESHOLDS = [
+    (20, "renaissance"),  # all of tier 4 (university/banking/steel_weapons/printing_press/gunpowder)
+    (15, "medieval"),  # all of tier 3 (philosophy..cavalry_tactics)
+    (9, "classical"),  # all of tier 2 (currency/horseback_riding/astronomy)
+    (6, "iron"),  # all 6 original tier-1 techs
+    (1, "bronze"),  # at least one tech researched
+]
+
+
+def compute_era(researched_count: int) -> str:
+    for threshold, era in ERA_THRESHOLDS:
+        if researched_count >= threshold:
+            return era
+    return "primitive"
+
+
 class Nation(Base):
     __tablename__ = "nations"
 
@@ -64,9 +90,16 @@ class Nation(Base):
     land_capacity: Mapped[int] = mapped_column(Integer, default=int(DEFAULT_LAND_CAPACITY))
     food_stock: Mapped[float] = mapped_column(Float, default=0.0)
     food_bonus: Mapped[float] = mapped_column(Float, default=0.0)
+    national_trait: Mapped[str] = mapped_column(String, default=_random_trait, server_default=NATIONAL_TRAIT_IDS[0])
+    built_buildings: Mapped[str] = mapped_column(String, default="", server_default="")
+    current_building: Mapped[str] = mapped_column(String, default="", server_default="")
+    current_building_months_left: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    current_wonder: Mapped[str] = mapped_column(String, default="", server_default="")
+    current_wonder_months_left: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     def to_dict(self):
         pop_factor = population_factor(self.population)
+        researched_count = len([t for t in self.researched_techs.split(",") if t])
         income = self.economy * INCOME_PER_ECONOMY_POINT * pop_factor
         expenses = (
             self.military * MILITARY_UPKEEP_RATE
@@ -95,4 +128,6 @@ class Nation(Base):
             "food_net": round(food_production - food_consumption, 1),
             "food_stock": round(self.food_stock, 1),
             "is_famine": self.food_stock < 0,
+            "national_trait": self.national_trait,
+            "era": compute_era(researched_count),
         }

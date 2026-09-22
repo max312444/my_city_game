@@ -7,6 +7,8 @@ const diplomacyStore = useDiplomacyStore()
 const WORLD_ICON = { war: '⚔️', alliance: '🤝', peace: '·' }
 const PERSONALITY_ICON = { aggressive: '⚔️', economic: '💰', isolationist: '🛡️' }
 const PERSONALITY_LABEL = { aggressive: '호전적', economic: '경제 중심', isolationist: '고립주의' }
+const TRAIT_ICON = { military: '⚔️', economic: '💰', production: '🏭', scholarly: '📚' }
+const TRAIT_LABEL = { military: '군사 특화', economic: '경제 특화', production: '생산 특화', scholarly: '학문 특화' }
 
 onMounted(async () => {
   // Sequential on purpose: for a brand-new session, both calls can trigger the
@@ -39,8 +41,13 @@ onMounted(async () => {
           }}
         </span>
       </div>
+      <div v-if="r.relationship === 'war' && r.siege_target_name" class="siege-row">
+        🎯 공격 목표: {{ r.siege_target_name }}
+      </div>
       <div v-if="r.relationship !== 'defeated'" class="personality-row">
         {{ PERSONALITY_ICON[r.personality] || '·' }} {{ PERSONALITY_LABEL[r.personality] || r.personality }}
+        <span class="dot">·</span>
+        {{ TRAIT_ICON[r.national_trait] || '·' }} {{ TRAIT_LABEL[r.national_trait] || r.national_trait }}
       </div>
       <div v-if="r.relationship !== 'defeated'" class="rival-stats">
         <span>경제 {{ r.economy }}</span>
@@ -129,10 +136,20 @@ onMounted(async () => {
   background: rgba(0, 0, 0, 0.4);
   color: var(--text-faint);
 }
+.siege-row {
+  font-size: 11px;
+  color: var(--text-negative);
+  margin-top: 2px;
+  font-weight: bold;
+}
 .personality-row {
   font-size: 11px;
   color: var(--accent);
   margin-top: 2px;
+}
+.personality-row .dot {
+  margin: 0 3px;
+  color: var(--text-faint);
 }
 .rival-stats {
   display: flex;

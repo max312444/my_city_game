@@ -11,8 +11,31 @@ export const useDiplomacyStore = defineStore('diplomacy', {
     error: '',
     lastReports: [],
     reportsTimerId: null,
+    pendingPeaceOffer: null,
   }),
   actions: {
+    async fetchPeaceOffer() {
+      const sessionId = useSessionStore().sessionId
+      const res = await fetch(`${API_BASE}/api/session/${sessionId}/diplomacy/peace-offer`)
+      const data = await res.json()
+      this.pendingPeaceOffer = data.offer
+    },
+    setPeaceOffer(offer) {
+      this.pendingPeaceOffer = offer
+    },
+    async respondPeaceOffer(accept) {
+      const offer = this.pendingPeaceOffer
+      if (!offer) return
+      const sessionId = useSessionStore().sessionId
+      this.pendingPeaceOffer = null
+      const res = await fetch(`${API_BASE}/api/session/${sessionId}/diplomacy/peace-offer/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rival_id: offer.rival_id, accept }),
+      })
+      const data = await res.json()
+      if (data.rivals) this.rivals = data.rivals
+    },
     async fetchRivals() {
       const sessionId = useSessionStore().sessionId
       const res = await fetch(`${API_BASE}/api/session/${sessionId}/diplomacy`)
@@ -29,7 +52,19 @@ export const useDiplomacyStore = defineStore('diplomacy', {
       return this.rivals.find((r) => r.rival_id === rivalId)?.name || rivalId
     },
     updateRivals(rivals) {
-      this.rivals = rivals
+      // Only the GET /diplomacy fetch computes siege_target_name (it reads the
+      // session's in-memory siege_targets) — every other broadcast (monthly drift,
+      // declare-war, etc.) returns plain rival dicts without it. Preserve whatever
+      // we already knew locally instead of letting it flicker to blank on every
+      // month's rivals_updated event; a fresh fetchRivals() (see the war_report
+      // handler in clock.js) is what actually clears it once a siege is resolved.
+      this.rivals = rivals.map((incoming) => {
+        const existing = this.rivals.find((r) => r.rival_id === incoming.rival_id)
+        return {
+          ...incoming,
+          siege_target_name: incoming.siege_target_name ?? existing?.siege_target_name ?? null,
+        }
+      })
     },
     async declareWar(rivalId) {
       const sessionId = useSessionStore().sessionId
@@ -62,6 +97,23 @@ export const useDiplomacyStore = defineStore('diplomacy', {
       }
       this.rivals = data.rivals
       return data.accepted
+    },
+    async attackCity(x, y) {
+      const sessionId = useSessionStore().sessionId
+      this.error = ''
+      const res = await fetch(`${API_BASE}/api/session/${sessionId}/diplomacy/attack-city`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ x, y }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.detail || '공격에 실패했습니다')
+      }
+      this.rivals = data.rivals.map((r) =>
+        r.rival_id === data.rival_id ? { ...r, siege_target_name: data.city_name } : r,
+      )
+      return data
     },
     showReports(reports) {
       this.lastReports = reports

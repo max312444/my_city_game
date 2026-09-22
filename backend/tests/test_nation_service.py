@@ -71,6 +71,21 @@ async def test_random_event_treasury_effect_direction_is_stable_even_when_alread
     assert updated.treasury < -100.0
 
 
+def test_compute_era_reflects_tech_tree_progress():
+    from app.models.nation import compute_era
+
+    assert compute_era(0) == "primitive"
+    assert compute_era(1) == "bronze"
+    assert compute_era(5) == "bronze"
+    assert compute_era(6) == "iron"
+    assert compute_era(8) == "iron"
+    assert compute_era(9) == "classical"
+    assert compute_era(14) == "classical"
+    assert compute_era(15) == "medieval"
+    assert compute_era(19) == "medieval"
+    assert compute_era(20) == "renaissance"
+
+
 def test_compute_land_capacity_scales_with_tiles_and_has_a_floor():
     assert nation_service.compute_land_capacity(0) == 1000  # never below the old flat default
     assert nation_service.compute_land_capacity(9) == 9 * nation_service.LAND_CAPACITY_PER_TILE
@@ -109,6 +124,30 @@ async def test_advance_nation_resource_food_bonus_raises_food_stock(session_id):
         session_id, {"year": 1, "month": 2}, resource_bonus={"food": 0.5}
     )
     assert boosted.food_stock > plain.food_stock
+
+
+async def test_national_trait_boosts_its_matching_stats_growth(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    monkeypatch.setattr(nation_service.random, "uniform", lambda a, b: 5.0)  # pin the base roll positive
+
+    from app.db import async_session_maker
+
+    async def _set_trait(trait):
+        async with async_session_maker() as db:
+            nation = await nation_service._get_or_create_nation(db, session_id)
+            nation.economy = 100.0
+            nation.national_trait = trait
+            await db.commit()
+
+    await _set_trait("military")
+    baseline = await nation_service.advance_nation(session_id, {"year": 1, "month": 1})
+
+    await _set_trait("economic")
+    boosted = await nation_service.advance_nation(session_id, {"year": 1, "month": 2})
+
+    # Same starting economy (100), same pinned +5 base roll — only national_trait
+    # differs, and "economic" boosts economy growth 1.6x vs "military"'s 0.85x.
+    assert boosted.economy > baseline.economy
 
 
 async def test_sync_land_capacity_updates_immediately(session_id):

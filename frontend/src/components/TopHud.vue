@@ -14,12 +14,38 @@ const items = [
   { icon: '⚔️', key: 'military', title: '군사력' },
   { icon: '📚', key: 'education', title: '교육' },
 ]
+
+const ERA_META = {
+  primitive: { icon: '🔥', label: '원시시대' },
+  bronze: { icon: '🪓', label: '청동기시대' },
+  iron: { icon: '⚒️', label: '철기시대' },
+  classical: { icon: '🏛️', label: '고전시대' },
+  medieval: { icon: '🏰', label: '중세시대' },
+  renaissance: { icon: '🎨', label: '르네상스시대' },
+}
+const TRAIT_META = {
+  military: { icon: '⚔️', label: '군사 특화' },
+  economic: { icon: '💰', label: '경제 특화' },
+  production: { icon: '🏭', label: '생산 특화' },
+  scholarly: { icon: '📚', label: '학문 특화' },
+}
 </script>
 
 <template>
   <div class="hud-wrap">
     <button class="hud-tab panel" @click="open = !open">
       <span class="nation-name">{{ nationStore.nation.name }}</span>
+      <span v-if="ERA_META[nationStore.nation.era]" class="badge-pill" :title="ERA_META[nationStore.nation.era].label">
+        {{ ERA_META[nationStore.nation.era].icon }} {{ ERA_META[nationStore.nation.era].label }}
+      </span>
+      <span
+        v-if="TRAIT_META[nationStore.nation.national_trait]"
+        class="badge-pill"
+        :title="TRAIT_META[nationStore.nation.national_trait].label"
+      >
+        {{ TRAIT_META[nationStore.nation.national_trait].icon }}
+        {{ TRAIT_META[nationStore.nation.national_trait].label }}
+      </span>
       <span class="chevron">{{ open ? '▲' : '▼' }}</span>
     </button>
     <div class="hud-stats panel" :class="{ open }">
@@ -73,6 +99,13 @@ const items = [
 .chevron {
   color: var(--text-faint);
   font-size: 10px;
+}
+.badge-pill {
+  font-size: 11px;
+  color: var(--accent);
+  white-space: nowrap;
+  border-left: 1px solid var(--panel-border-soft);
+  padding-left: 10px;
 }
 .hud-stats {
   display: flex;

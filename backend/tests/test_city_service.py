@@ -124,6 +124,32 @@ async def test_found_rival_city_returns_none_when_no_tile_is_far_enough(session_
     assert await city_service.get_cities(session_id) == []
 
 
+async def test_transfer_city_at_changes_owner_and_returns_info(session_id):
+    owned = _owned_around(*CAPITAL.values())
+    await city_service.found_rival_city(session_id, "eastern_tribes", CAPITAL, owned, {"year": 1, "month": 1})
+    city = (await city_service.get_cities(session_id))[0]
+
+    result = await city_service.transfer_city_at(session_id, city["x"], city["y"], "player")
+    assert result == {"name": city["name"], "x": city["x"], "y": city["y"], "owner": "player"}
+
+    updated = (await city_service.get_cities(session_id))[0]
+    assert updated["owner"] == "player"
+
+
+async def test_transfer_city_at_returns_none_when_no_city_at_that_tile(session_id):
+    result = await city_service.transfer_city_at(session_id, 500, 500, "player")
+    assert result is None
+
+
+async def test_transfer_city_at_returns_none_when_already_owned_by_new_owner(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    await _give_treasury(session_id, 10_000)
+    owned = _owned_around(*CAPITAL.values())
+    await city_service.found_city(session_id, 15, 15, "내도시", CAPITAL, {"year": 1, "month": 1}, owned)
+    result = await city_service.transfer_city_at(session_id, 15, 15, "player")
+    assert result is None  # already player-owned, nothing to transfer
+
+
 async def test_found_rival_city_respects_distance_from_other_cities(session_id):
     owned = _owned_around(*CAPITAL.values())
     first = await city_service.found_rival_city(session_id, "eastern_tribes", CAPITAL, owned, {"year": 1, "month": 1})

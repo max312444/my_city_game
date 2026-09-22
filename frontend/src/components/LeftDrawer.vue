@@ -2,17 +2,23 @@
 import { ref } from 'vue'
 import TechPanel from './TechPanel.vue'
 import DiplomacyPanel from './DiplomacyPanel.vue'
+import BuildingPanel from './BuildingPanel.vue'
+import WonderPanel from './WonderPanel.vue'
+import TradePanel from './TradePanel.vue'
 
 const open = ref(false)
 </script>
 
 <template>
   <button class="drawer-tab" :class="{ open }" @click="open = !open">
-    {{ open ? '◀' : '▶' }} 테크 · 외교
+    {{ open ? '◀' : '▶' }} 테크 · 건물 · 유산 · 외교 · 교역
   </button>
   <div class="drawer-panel" :class="{ open }">
     <TechPanel />
+    <BuildingPanel />
+    <WonderPanel />
     <DiplomacyPanel />
+    <TradePanel />
   </div>
 </template>
 

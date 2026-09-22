@@ -132,6 +132,23 @@ async def found_rival_city(
         return {"name": name, "x": x, "y": y}
 
 
+async def transfer_city_at(session_id: str, x: int, y: int, new_owner: str) -> dict | None:
+    """Called right after territory_service.capture_tile succeeds on a tile — if a
+    founded city (not a capital; capitals aren't rows in this table) happens to sit on
+    that exact tile, it changes hands along with the land under it. Returns the city's
+    info if one was transferred, None if the captured tile had no city on it."""
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(City).where(City.session_id == session_id, City.x == x, City.y == y)
+        )
+        city = result.scalar_one_or_none()
+        if city is None or city.owner == new_owner:
+            return None
+        city.owner = new_owner
+        await db.commit()
+        return {"name": city.name, "x": x, "y": y, "owner": new_owner}
+
+
 async def delete_cities(session_id: str) -> None:
     async with async_session_maker() as db:
         for city in await _get_cities(db, session_id):

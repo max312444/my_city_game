@@ -11,6 +11,14 @@ async def _give_treasury(session_id, amount):
         await db.commit()
 
 
+def test_compute_cost_grows_faster_than_linear_at_scale():
+    # The marginal cost of the 100th tile should be much steeper than the marginal
+    # cost of the 10th — that's the whole point of adding a quadratic term.
+    marginal_early = territory_service.compute_cost(10) - territory_service.compute_cost(9)
+    marginal_late = territory_service.compute_cost(100) - territory_service.compute_cost(99)
+    assert marginal_late > marginal_early * 5
+
+
 async def test_initial_territory_is_a_3x3_block_around_the_capital(session_id):
     await territory_service.ensure_initial_territory(session_id, 10, 10)
     tiles = await territory_service.get_owned_tiles(session_id)
@@ -35,7 +43,7 @@ async def test_purchase_tile_charges_cost_and_requires_adjacency(session_id):
     # (10,10) with radius 1 owns x:9-11,y:9-11 — (12,9) is just outside that block but
     # still adjacent to its (11,9) corner.
     nation, cost = await territory_service.purchase_tile(session_id, 12, 9, terrain="grass")
-    assert cost == territory_service.TILE_BASE_COST + territory_service.TILE_COST_GROWTH * 9
+    assert cost == territory_service.compute_cost(9)
     assert nation.treasury == 10_000 - cost
 
     tiles = await territory_service.get_owned_tiles(session_id)
@@ -143,6 +151,31 @@ async def test_capture_tile_never_takes_a_protected_capital(session_id):
     all_tiles = await territory_service.get_all_tiles(session_id)
     capital_owner = next(t["owner"] for t in all_tiles if t["x"] == 13 and t["y"] == 10)
     assert capital_owner == "eastern_tribes"
+
+
+async def test_capture_tile_prefers_the_given_preferred_tile_when_valid(session_id):
+    await territory_service.ensure_initial_territory(session_id, 10, 10)  # owns x:9-11,y:9-11
+    await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 13, 10)  # owns x:12-14,y:9-11
+
+    result = await territory_service.capture_tile(
+        session_id, "player", "eastern_tribes", protected_tiles=set(), preferred_tile=(12, 11)
+    )
+    assert result == {"x": 12, "y": 11, "eliminated": False}
+
+
+async def test_capture_tile_falls_back_to_random_when_preferred_tile_is_not_a_candidate(session_id):
+    await territory_service.ensure_initial_territory(session_id, 10, 10)
+    await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 13, 10)
+
+    # (13, 10) is the rival's capital tile and not adjacent to the player's block at
+    # all in a way that matters here — it's simply not a valid candidate, so the
+    # capture must still succeed by falling back to a real border tile instead of
+    # returning None.
+    result = await territory_service.capture_tile(
+        session_id, "player", "eastern_tribes", protected_tiles=set(), preferred_tile=(999, 999)
+    )
+    assert result is not None
+    assert result["x"] == 12  # the only column actually adjacent to the player's block
 
 
 async def test_delete_territory_removes_every_owner(session_id):

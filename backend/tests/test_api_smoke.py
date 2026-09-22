@@ -120,6 +120,104 @@ async def test_diplomacy_via_http(client, session_id):
     assert unknown.status_code == 400
 
 
+async def test_trade_route_via_http(client, session_id):
+    await client.get(f"/api/session/{session_id}/nation")
+    await client.get(f"/api/session/{session_id}/diplomacy")  # seeds the 3 rivals
+
+    establish = await client.post(
+        f"/api/session/{session_id}/trade/establish", json={"rival_id": "eastern_tribes"}
+    )
+    assert establish.status_code == 200
+
+    state = (await client.get(f"/api/session/{session_id}/trade")).json()
+    assert len(state["routes"]) == 1
+    assert state["routes"][0]["rival_id"] == "eastern_tribes"
+    assert state["routes"][0]["income"] > 0  # at peace by default
+
+    duplicate = await client.post(
+        f"/api/session/{session_id}/trade/establish", json={"rival_id": "eastern_tribes"}
+    )
+    assert duplicate.status_code == 400
+
+    closed = await client.post(f"/api/session/{session_id}/trade/close", json={"rival_id": "eastern_tribes"})
+    assert closed.status_code == 200
+    state_after = (await client.get(f"/api/session/{session_id}/trade")).json()
+    assert state_after["routes"] == []
+
+
+async def test_sell_food_via_http(client, session_id):
+    await client.get(f"/api/session/{session_id}/nation")
+    await _give_treasury(session_id, 0)
+
+    from app.db import async_session_maker
+    from app.services import nation_service as nation_service_module
+
+    async with async_session_maker() as db:
+        nation = await nation_service_module._get_or_create_nation(db, session_id)
+        nation.food_stock = 100.0
+        await db.commit()
+
+    resp = await client.post(f"/api/session/{session_id}/trade/sell-food", json={"amount": 50.0})
+    assert resp.status_code == 200
+    data = resp.json()["nation"]
+    assert data["food_stock"] == 50.0
+    assert data["treasury"] == 50.0 * 2.0  # FOOD_SELL_RATE
+
+    too_much = await client.post(f"/api/session/{session_id}/trade/sell-food", json={"amount": 1000.0})
+    assert too_much.status_code == 400
+
+
+async def test_attack_city_via_http_declares_war_and_sets_siege_target(client, session_id):
+    await client.get(f"/api/session/{session_id}/nation")
+    await client.get(f"/api/session/{session_id}/diplomacy")  # seeds the 3 rivals
+
+    from app.db import async_session_maker
+    from app.models.city import City
+    from app.models.territory import OwnedTile
+
+    async with async_session_maker() as db:
+        db.add(OwnedTile(session_id=session_id, x=500, y=500, owner="eastern_tribes"))
+        db.add(
+            City(
+                session_id=session_id,
+                name="언덕마을",
+                x=500,
+                y=500,
+                owner="eastern_tribes",
+                founded_year=1,
+                founded_month=1,
+            )
+        )
+        await db.commit()
+
+    resp = await client.post(f"/api/session/{session_id}/diplomacy/attack-city", json={"x": 500, "y": 500})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["city_name"] == "언덕마을"
+    assert data["rival_id"] == "eastern_tribes"
+
+    rivals = (await client.get(f"/api/session/{session_id}/diplomacy")).json()["rivals"]
+    eastern = next(r for r in rivals if r["rival_id"] == "eastern_tribes")
+    assert eastern["relationship"] == "war"
+    assert eastern["siege_target_name"] == "언덕마을"
+
+
+async def test_attack_city_rejects_empty_tile(client, session_id):
+    await client.get(f"/api/session/{session_id}/nation")
+    resp = await client.post(f"/api/session/{session_id}/diplomacy/attack-city", json={"x": 0, "y": 0})
+    assert resp.status_code == 400
+
+
+async def test_attack_city_rejects_own_territory(client, session_id):
+    await client.get(f"/api/session/{session_id}/nation")
+    territory = (await client.get(f"/api/session/{session_id}/territory")).json()
+    own_tile = territory["tiles"][0]
+    resp = await client.post(
+        f"/api/session/{session_id}/diplomacy/attack-city", json={"x": own_tile["x"], "y": own_tile["y"]}
+    )
+    assert resp.status_code == 400
+
+
 async def test_territory_purchase_via_http(client, session_id):
     await client.get(f"/api/session/{session_id}/nation")
     territory = await client.get(f"/api/session/{session_id}/territory")
