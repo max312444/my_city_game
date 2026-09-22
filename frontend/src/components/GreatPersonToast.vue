@@ -24,13 +24,13 @@ const greatPeopleStore = useGreatPeopleStore()
   align-items: flex-start;
   gap: 10px;
   padding: 12px 18px;
-  border-radius: 8px;
-  color: white;
-  font-family: sans-serif;
+  border-radius: var(--panel-radius);
+  color: var(--text);
+  font-family: var(--font-body);
   max-width: 420px;
-  background: rgba(90, 70, 20, 0.92);
-  border: 1px solid #ffd166;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  background: rgba(52, 38, 14, 0.94);
+  border: 1px solid var(--accent-strong);
+  box-shadow: var(--panel-shadow);
   z-index: 20;
 }
 .icon {
@@ -38,13 +38,14 @@ const greatPeopleStore = useGreatPeopleStore()
   line-height: 1.2;
 }
 .title {
+  font-family: var(--font-heading);
   font-weight: bold;
   font-size: 14px;
   margin-bottom: 2px;
-  color: #ffd166;
+  color: var(--accent-strong);
 }
 .description {
   font-size: 12px;
-  color: #f0e6d0;
+  color: var(--text-dim);
 }
 </style>

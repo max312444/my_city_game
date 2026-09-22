@@ -7,6 +7,7 @@ import { useRandomEventStore } from './randomEvent'
 import { useGreatPeopleStore } from './greatPeople'
 import { useDiplomacyStore } from './diplomacy'
 import { useTerritoryStore } from './territory'
+import { useCityStore } from './city'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -15,6 +16,8 @@ export const useClockStore = defineStore('clock', {
     currentDate: { year: 1, month: 1 },
     speed: 'normal',
     socket: null,
+    connected: true,
+    reconnectAttempts: 0,
   }),
   actions: {
     async fetchInitial() {
@@ -26,8 +29,27 @@ export const useClockStore = defineStore('clock', {
     },
     connect() {
       const sessionId = useSessionStore().sessionId
-      this.socket = new WebSocket(`ws://localhost:8000/ws/${sessionId}`)
-      this.socket.onmessage = (event) => {
+      const ws = new WebSocket(`ws://localhost:8000/ws/${sessionId}`)
+      this.socket = ws
+
+      ws.onopen = () => {
+        this.connected = true
+        this.reconnectAttempts = 0
+      }
+      ws.onclose = () => {
+        // If this.socket no longer points at this exact socket, disconnect() already
+        // superseded it (intentional logout/reload) — nothing to reconnect.
+        if (this.socket !== ws) return
+        this.connected = false
+        const sid = useSessionStore().sessionId
+        if (!sid) return
+        const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 15000)
+        this.reconnectAttempts += 1
+        setTimeout(() => {
+          if (useSessionStore().sessionId === sid) this.connect()
+        }, delay)
+      }
+      ws.onmessage = (event) => {
         const message = JSON.parse(event.data)
         if (message.event_type === 'month_advanced') {
           this.currentDate = message.payload.current_date
@@ -49,15 +71,20 @@ export const useClockStore = defineStore('clock', {
           useDiplomacyStore().updateRivals(message.payload.rivals)
         } else if (message.event_type === 'war_report') {
           useDiplomacyStore().showReports(message.payload.reports)
+          useDiplomacyStore().fetchWorldRelationships()
         } else if (message.event_type === 'territory_updated') {
           useTerritoryStore().updateAll(message.payload.all)
+        } else if (message.event_type === 'cities_updated') {
+          useCityStore().updateCities(message.payload.cities)
         }
       }
     },
     disconnect() {
       if (this.socket) {
-        this.socket.close()
+        const ws = this.socket
         this.socket = null
+        ws.onclose = null // this is an intentional close — don't let it trigger a reconnect
+        ws.close()
       }
     },
     async setSpeed(speed) {

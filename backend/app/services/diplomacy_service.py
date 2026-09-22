@@ -3,7 +3,7 @@ import random
 
 from sqlalchemy import select
 
-from app.data.rivals import RIVAL_TEMPLATES
+from app.data.rivals import PERSONALITY_TRAITS, RIVAL_TEMPLATES
 from app.db import async_session_maker
 from app.models.rival_nation import RivalNation
 from app.models.rival_relationship import RivalRelationship
@@ -31,24 +31,37 @@ WAR_EXHAUSTION_PEACE_CHANCE_PER_MONTH = 0.02
 WAR_EXHAUSTION_PEACE_CHANCE_CAP = 0.3
 
 # Rivals also act on each other, independent of the player — the "다른 국가들도 각자
-# 성향에 따라 완전 자율로 발전한다" part of the original design brief. Kept deliberately
-# lighter-weight than the player-facing war system: no territory changes hands between
-# two rivals, and an alliance is flavor only (it does not drag anyone into a war).
+# 성향에 따라 완전 자율로 발전한다" part of the original design brief.
 WORLD_WAR_CHANCE_PER_MONTH = 0.01
 WORLD_ALLIANCE_CHANCE_PER_MONTH = 0.008
 WORLD_ALLIANCE_BREAK_CHANCE_PER_MONTH = 0.02
 WORLD_WAR_PEACE_CHANCE_PER_MONTH = 0.08
+
+# An ally isn't just flavor — if the player attacks a rival, that rival's ally has a
+# real (personality-scaled) chance of joining in to defend them.
+MUTUAL_DEFENSE_CHANCE_PER_MONTH = 0.15
+MUTUAL_DEFENSE_CHANCE_CAP = 0.4
 
 
 class DiplomacyError(Exception):
     pass
 
 
+def _trait(personality: str, key: str) -> float:
+    return PERSONALITY_TRAITS.get(personality, {}).get(key, 1.0)
+
+
 async def _get_rivals(db, session_id: str) -> list[RivalNation]:
     result = await db.execute(select(RivalNation).where(RivalNation.session_id == session_id))
     rivals = list(result.scalars().all())
-    if not rivals:
-        for template in RIVAL_TEMPLATES:
+    # Per-template (not "if not rivals: seed all") so this stays correct even if two
+    # requests for a brand-new session raced each other here — each only adds the
+    # rival_ids actually missing, instead of potentially both seeding all 3 and
+    # leaving duplicate rows behind.
+    existing_ids = {r.rival_id for r in rivals}
+    missing = [t for t in RIVAL_TEMPLATES if t["rival_id"] not in existing_ids]
+    if missing:
+        for template in missing:
             rival = RivalNation(session_id=session_id, **template)
             db.add(rival)
             rivals.append(rival)
@@ -122,6 +135,19 @@ async def advance_rivals(session_id: str, current_date: dict):
         reports = []
         war_outcomes = []  # (winner_owner, loser_owner, rival_name) — resolved into tile captures below
 
+        # Who's allied with whom, and who's already fighting the player this month —
+        # both needed for the mutual-defense check below (a rival can be dragged into
+        # the player's war by an ally, on top of its own opportunistic aggression roll).
+        relationship_rows = (
+            await db.execute(select(RivalRelationship).where(RivalRelationship.session_id == session_id))
+        ).scalars().all()
+        allies_of: dict[str, set[str]] = {}
+        for row in relationship_rows:
+            if row.relationship == "alliance":
+                allies_of.setdefault(row.rival_a, set()).add(row.rival_b)
+                allies_of.setdefault(row.rival_b, set()).add(row.rival_a)
+        already_at_war_with_player = {r.rival_id for r in rivals if r.relationship == "war"}
+
         for rival in rivals:
             if rival.relationship == "defeated":
                 continue  # a fallen nation is out of the game — its stats stay frozen
@@ -170,12 +196,32 @@ async def advance_rivals(session_id: str, current_date: dict):
 
                 nation.treasury -= WAR_UPKEEP_BASE + nation.military * WAR_UPKEEP_PER_MILITARY
             else:
+                # An ally already fighting the player pulls this rival in too, with
+                # its own personality-scaled willingness to jump in — checked before
+                # (and separately from) the opportunistic aggression roll below.
+                allied_at_war = allies_of.get(rival.rival_id, set()) & already_at_war_with_player
+                if allied_at_war:
+                    mutual_defense_chance = min(
+                        MUTUAL_DEFENSE_CHANCE_CAP,
+                        MUTUAL_DEFENSE_CHANCE_PER_MONTH * _trait(rival.personality, "aggression_multiplier"),
+                    )
+                    if random.random() < mutual_defense_chance:
+                        rival.relationship = "war"
+                        rival.war_months = 0
+                        nation.stability = _apply_delta(
+                            nation.stability, nation.stability * WAR_DECLARATION_STABILITY_PENALTY
+                        )
+                        reports.append(f"{rival.name}이(가) 동맹국을 지키기 위해 참전했습니다!")
+                        continue
+
                 # At peace: a rival currently stronger than the player has a small,
                 # capped chance of striking first — the player is never truly safe from
                 # war, but it stays a rare event, not something to brace for every month.
                 aggression_chance = min(
                     RIVAL_AGGRESSION_CHANCE_CAP,
-                    RIVAL_AGGRESSION_CHANCE_BASE * (rival.military / max(nation.military, 1.0)),
+                    RIVAL_AGGRESSION_CHANCE_BASE
+                    * _trait(rival.personality, "aggression_multiplier")
+                    * (rival.military / max(nation.military, 1.0)),
                 )
                 if random.random() < aggression_chance:
                     rival.relationship = "war"
@@ -225,7 +271,10 @@ async def _get_relationships(db, session_id: str, rival_ids: list[str]) -> dict[
     result = await db.execute(select(RivalRelationship).where(RivalRelationship.session_id == session_id))
     rows = {(_pair_key(r.rival_a, r.rival_b)): r for r in result.scalars().all()}
 
-    for a, b in itertools.combinations(sorted(rival_ids), 2):
+    # Dedupe defensively — if RivalNation ever ends up with duplicate rows for the
+    # same rival_id (e.g. a seeding race), combinations() over a list with repeats
+    # would otherwise produce nonsense pairs like (a, a).
+    for a, b in itertools.combinations(sorted(set(rival_ids)), 2):
         key = (a, b)
         if key not in rows:
             row = RivalRelationship(session_id=session_id, rival_a=a, rival_b=b, relationship="peace")
@@ -249,16 +298,20 @@ async def get_world_relationships(session_id: str) -> list[dict]:
         ]
 
 
-async def advance_world(session_id: str) -> list[str]:
+async def advance_world(session_id: str):
     """Called once per month tick, independent of the player: rivals occasionally go
-    to war, ally, or make peace with *each other*. Deliberately lightweight — no
-    territory changes hands between two rivals, and an alliance is flavor only (it
-    never drags a third party into someone else's war). Returns a list of news lines."""
+    to war, ally, or make peace with *each other*. An alliance can now also drag a
+    third rival into the player's war (see advance_rivals's mutual-defense check) —
+    it's no longer pure flavor. Returns (news, world_war_outcomes), where
+    world_war_outcomes is a list of (winner_id, loser_id, winner_name, loser_name)
+    for session_manager to resolve into actual tile captures — this module stays
+    ignorant of map/territory itself, same reasoning as war_outcomes above."""
     async with async_session_maker() as db:
         rivals = await _get_rivals(db, session_id)
         by_id = {r.rival_id: r for r in rivals if r.relationship != "defeated"}
         relationships = await _get_relationships(db, session_id, list(by_id.keys()))
         news = []
+        world_war_outcomes = []
 
         for (a, b), rel in relationships.items():
             if a not in by_id or b not in by_id:
@@ -266,10 +319,20 @@ async def advance_world(session_id: str) -> list[str]:
             rival_a, rival_b = by_id[a], by_id[b]
 
             if rel.relationship == "peace":
-                if random.random() < WORLD_WAR_CHANCE_PER_MONTH:
+                # Both sides' personalities lean the odds — two aggressive neighbors
+                # go to war far more readily than two isolationists ever would.
+                war_mult = (
+                    _trait(rival_a.personality, "world_war_multiplier")
+                    + _trait(rival_b.personality, "world_war_multiplier")
+                ) / 2
+                alliance_mult = (
+                    _trait(rival_a.personality, "alliance_multiplier")
+                    + _trait(rival_b.personality, "alliance_multiplier")
+                ) / 2
+                if random.random() < WORLD_WAR_CHANCE_PER_MONTH * war_mult:
                     rel.relationship = "war"
                     news.append(f"{rival_a.name}과(와) {rival_b.name}이(가) 전쟁을 시작했습니다.")
-                elif random.random() < WORLD_ALLIANCE_CHANCE_PER_MONTH:
+                elif random.random() < WORLD_ALLIANCE_CHANCE_PER_MONTH * alliance_mult:
                     rel.relationship = "alliance"
                     news.append(f"{rival_a.name}과(와) {rival_b.name}이(가) 동맹을 맺었습니다.")
 
@@ -279,6 +342,7 @@ async def advance_world(session_id: str) -> list[str]:
                 loser, winner = (rival_a, rival_b) if power_a < power_b else (rival_b, rival_a)
                 loser.military = max(0.0, loser.military * 0.92)
                 loser.stability = max(0.0, loser.stability * 0.97)
+                world_war_outcomes.append((winner.rival_id, loser.rival_id, winner.name, loser.name))
 
                 if random.random() < WORLD_WAR_PEACE_CHANCE_PER_MONTH:
                     rel.relationship = "peace"
@@ -290,4 +354,4 @@ async def advance_world(session_id: str) -> list[str]:
                     news.append(f"{rival_a.name}과(와) {rival_b.name}의 동맹이 깨졌습니다.")
 
         await db.commit()
-        return news
+        return news, world_war_outcomes

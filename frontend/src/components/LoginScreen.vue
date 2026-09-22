@@ -112,17 +112,17 @@ async function submit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: sans-serif;
-  background: radial-gradient(circle at 50% 20%, #2a3550 0%, #14161f 70%);
-  color: white;
+  font-family: var(--font-body);
+  background: radial-gradient(ellipse at 50% 15%, #2a2013 0%, var(--bg-app) 70%);
+  color: var(--text);
 }
 .card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
   padding: 36px;
-  border-radius: 14px;
+  border-radius: 10px;
   width: 340px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--panel-shadow);
 }
 .brand {
   text-align: center;
@@ -132,38 +132,37 @@ async function submit() {
   font-size: 36px;
 }
 .brand-name {
-  font-size: 26px;
-  font-weight: bold;
-  letter-spacing: 0.08em;
-  background: linear-gradient(90deg, #ffd166, #f8f0d8);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  margin: 4px 0 6px;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent-strong);
+  margin: 6px 0 8px;
 }
 .brand-tagline {
   font-size: 12px;
-  color: #9aa3c0;
+  color: var(--text-dim);
 }
 .tabs {
   display: flex;
   margin-bottom: 20px;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #444;
+  border: 1px solid var(--panel-border-soft);
 }
 .tabs button {
   flex: 1;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  color: #aaa;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-dim);
   border: none;
   cursor: pointer;
   font-size: 14px;
+  font-family: var(--font-body);
 }
 .tabs button.active {
-  background: #4a90d9;
-  color: white;
+  background: var(--accent-dim);
+  color: var(--accent-strong);
   font-weight: bold;
 }
 .form {
@@ -176,19 +175,20 @@ async function submit() {
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
-  color: #cfd6ea;
+  color: var(--text-dim);
 }
 .field input {
   padding: 10px 12px;
   border-radius: 6px;
-  border: 1px solid #555;
-  background: #1c2030;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   font-size: 14px;
+  font-family: var(--font-body);
 }
 .field input:focus {
   outline: none;
-  border-color: #4a90d9;
+  border-color: var(--accent);
 }
 .id-row {
   display: flex;
@@ -200,31 +200,32 @@ async function submit() {
 .check-btn {
   padding: 0 10px;
   border-radius: 6px;
-  border: 1px solid #555;
-  background: #333;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   cursor: pointer;
   font-size: 12px;
   white-space: nowrap;
+  font-family: var(--font-body);
 }
 .check-btn:hover {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .status {
   font-size: 12px;
 }
 .status.available {
-  color: #4ade80;
+  color: var(--text-positive);
 }
 .status.taken {
-  color: #ff6b6b;
+  color: var(--text-negative);
 }
 .status.checking {
-  color: #999;
+  color: var(--text-faint);
 }
 .error {
-  color: #ff8080;
+  color: var(--text-negative);
   font-size: 13px;
   text-align: center;
 }
@@ -232,18 +233,19 @@ async function submit() {
   margin-top: 6px;
   padding: 12px;
   border-radius: 8px;
-  border: none;
-  background: linear-gradient(90deg, #4a90d9, #6ab0f3);
-  color: white;
+  border: 1px solid var(--accent);
+  background: linear-gradient(180deg, var(--accent) 0%, #a9803e 100%);
+  color: #241d12;
   font-weight: bold;
   font-size: 14px;
   cursor: pointer;
+  font-family: var(--font-body);
 }
 .submit-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 .submit-btn:hover:not(:disabled) {
-  filter: brightness(1.1);
+  filter: brightness(1.08);
 }
 </style>

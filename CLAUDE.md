@@ -377,15 +377,14 @@ class GameClock:
   `DiplomacyPanel` 컴포넌트 내부는 전혀 안 건드림(이미 자체 완결된 220px 폭 카드형 UI라 드로어 안에
   그대로 넣기만 하면 동작). CDP로 collapsed → expanded → collapsed 토글 왕복 확인 완료.
 
-## 진행 중 (다음 세션에서 이어서 할 일)
+## 대규모 기능 확장 + 프론트 전면 재테마 (2026-09-22)
 
 사용자가 한 메시지에 6가지를 요청("오른쪽 메뉴는 그대로 두고 국가 통계를 서랍형으로", "도시당 최대인구
 대폭 증가", "도시 등급 표시를 글자 대신 이모지로", "전쟁으로 인한 멸망 구현", "수도 외 다른 도시 개설",
 "라이벌끼리도 동맹/전쟁/교역 상호작용") + 이어서 GameMenu에 "메인 화면으로/저장하기/다시하기(확인
-필요)" 추가 요청. 백엔드 로직은 아래처럼 전부 구현하고 테스트 78개로 검증 완료, **프론트엔드는 전혀
-손 안 댐** — 다음 세션 시작하면 바로 프론트 작업부터 이어가면 됨.
-
-**백엔드 완료분:**
+필요)" 추가 요청. 백엔드부터 구현하고(이전 세션에서 78개 테스트로 검증) 이번 세션에 프론트엔드까지
+전부 마무리, 그 사이에 사용자가 "게임 로그(연대기)"와 "UI 디자인 전면 재정비"까지 추가 요청해서 함께
+처리함. 아래는 전체 완료 내역.
 - **최대 인구 = 보유 타일 수 기반으로 확장**: `models/nation.py`에 `LAND_CAPACITY_PER_TILE=500`,
   `compute_land_capacity(tiles) = max(1000, tiles*500)`. `nation_service.advance_nation`이
   `owned_tile_count`/`city_count` 파라미터를 받아 매달 `land_capacity`를 갱신하고, 새
@@ -433,25 +432,175 @@ class GameClock:
   단, `advance_world`/`mark_defeated`/월드 관계 자체에 대한 서비스 레벨 테스트는 시간 관계상 아직
   못 씀, 다음 세션 TODO).
 
-**다음 세션에서 프론트엔드로 해야 할 것 (전부 미착수):**
-1. `TopHud.vue`를 `LeftDrawer.vue`와 같은 패턴으로 서랍형으로 전환(사용자가 명시적으로 "국가 통계
-   수치가 계속 떠 있으면 불편하니 서랍형으로" 요청 — `GameMenu`(☰메뉴)는 그대로 설정 전용으로 둠).
-2. `MapCanvas.vue`의 `drawCity()`에서 `${name} (${TIER_LABEL[tier]})` 형태의 텍스트 등급 표시를
-   제거하고 이모지로 교체(예: 마을🏘️/소도시🏙️/도시🌆/대도시🌃).
-3. 도시 설립 UI: 캔버스 클릭 시 이미 있는 "영토 구매" 팝업처럼, 자기 소유 타일 위에서는 "도시 건설"
-   옵션도 보여주고(이름 입력 프롬프트 필요 — `NationNamePrompt.vue` 패턴 재사용 가능), `POST
-   /cities` 호출. 지도에 설립된 도시들 렌더링(작은 건물 클러스터 + 이름 라벨, `drawCity`와 비슷하지만
-   더 단순한 버전으로).
-4. 멸망 표시: 라이벌이 `relationship: "defeated"`면 지도에서 그 라이벌의 도시/영역을 안 그리거나
-   폐허 스타일로 표시, `DiplomacyPanel.vue`에서 "멸망" 배지 + 선전포고/평화 제안 버튼 숨김.
-5. 라이벌 간 관계 표시: `GET /diplomacy/world` 연동해서 `DiplomacyPanel.vue`에 "세계 정세" 같은 작은
-   섹션 추가(예: "북방 왕국 ⚔ 남방 도시국가", "동쪽 부족 연맹 🤝 북방 왕국").
-6. `GameMenu.vue` 설정 탭에 세 버튼 추가: "메인 화면으로 돌아가기"(기존 로그아웃과 동일 동작이면
-   충분), "저장하기"(이미 매달 자동 저장되므로 진짜 저장 로직은 불필요 — "저장되었습니다" 안내만),
-   "다시하기"(파괴적 액션 — 클릭 시 `window.confirm("기존의 데이터가 사라집니다. 그래도
-   진행하시겠습니까?")` 같은 확인 후에만 `DELETE /api/session/{id}` 호출 → 페이지 리로드해서
-   NationNamePrompt부터 다시 시작).
-7. 위 전부 끝나면 CDP로 전체 플로우 재검증 + CLAUDE.md 최종 정리.
+**이번 세션 프론트엔드 완료분:**
+1. `TopHud.vue`를 `LeftDrawer.vue`와 같은 서랍 패턴으로 전환 — 평소엔 국가 이름 pill("▼ 국가명")만
+   보이고, 클릭하면 그 아래로 7개 지표가 펼쳐짐(`max-height`/`opacity` 트랜지션). `GameMenu`(☰메뉴)는
+   그대로 설정/통계 전용으로 유지.
+2. `MapCanvas.vue`의 `drawCity()` 텍스트 등급(`(마을)`/`(대도시)` 등)을 이모지로 교체
+   (`TIER_EMOJI = ['🏘️','🏙️','🌆','🌃']`, 도시 이름 앞에 붙임).
+3. 도시 설립 UI 완성: `stores/city.js` 신설, `MapCanvas.vue`의 `handleClick`에서 자기 소유 타일 중
+   수도도 아니고 기존 도시도 없는 곳을 클릭하면 `foundCityPrompt`가 열려 이름 입력 + 비용 표시 +
+   건설/취소. 수도·다른 도시와 체비쇼프 거리 3칸 미만이면 즉시 에러 표시(백엔드가 최종 검증은 다시
+   함). 지도에는 `drawCity(tier=0)`로 작게 렌더링. CDP로 실제 타일 2칸 구매 → 도시 건설까지 끝까지
+   확인 완료.
+4. 멸망 표시: `drawRuins()` 함수 추가 — `relationship: "defeated"`인 라이벌은 건물 대신 흐린 잔해
+   + "💀 이름 (멸망)"으로 렌더링(완전히 안 그리는 대신 "몰락한 역사"가 지도에 남아있게). 라이벌
+   자체(영토는 이미 0타일이라 자동으로 안 그려짐)에 별도 처리 불필요했음.
+   `DiplomacyPanel.vue`는 `defeated` 배지 표시 + 선전포고/평화 제안 버튼 모두 숨김.
+5. 세계 정세: `diplomacy.js` 스토어에 `worldRelationships`/`fetchWorldRelationships()`/`rivalName()`
+   추가, `GET /diplomacy/world` 붙여서 `DiplomacyPanel.vue` 하단에 라이벌 쌍마다 ⚔(전쟁)/🤝(동맹)/
+   · (평화) 아이콘으로 표시. `clock.js`의 `war_report` 웹소켓 이벤트가 올 때마다 재조회(별도 브로드캐스트
+   안 만들고 기존 이벤트에 편승).
+6. `GameMenu.vue` 설정 탭에 4개 버튼: "메인 화면으로 돌아가기"(로그아웃과 동일 동작), "저장하기"(매달
+   자동 저장되므로 "저장되었습니다" 안내만 — 가짜 저장 로직 안 만듦), "다시하기"(주황/호박색으로
+   로그아웃과 시각적으로 구분, `window.confirm(...)` 확인 후 `DELETE /session/{id}` → 새로고침),
+   기존 "로그아웃"(빨강, 유지).
+7. **게임 로그(연대기)**: 새 테이블 `game_logs`(`year`,`month`,`category`,`message`) +
+   `log_service.py`. `session_manager.on_month_advance`가 테크 완료/이벤트/위인 등장/전쟁 보고/세계
+   소식을 매달 자동으로 기록(영토 구매처럼 너무 잦은 건 제외). `GameMenu.vue`에 "게임 로그" 탭 추가 —
+   열면 카테고리별 아이콘(📚⚡👑⚔️🌍🏛️)과 함께 오래된 순으로 나열되고 자동으로 맨 아래(최신)로
+   스크롤됨. `DELETE /session`에도 연결해서 "다시하기" 시 로그도 같이 초기화.
+8. **UI 전면 재테마("역사서/양피지" 톤, 사용자가 3가지 프리뷰 중 선택)**: `frontend/src/styles/
+   theme.css` 신설 — CSS 변수(`--panel-bg`, `--accent`, `--font-heading` 등)로 색/폰트를 한 곳에서
+   관리하고, `.panel`/`.panel-title` 공용 클래스 제공. Google Fonts `Noto Serif KR`(본문/한글 제목)
+   + `Cinzel`(로고 "REGNUM" 전용)을 `index.html`에 추가. 기존에 컴포넌트마다 제각각이던
+   하드코딩 색상(`rgba(0,0,0,0.6)`, `#4a90d9` 등)을 전부 변수로 교체 — TopHud/ClockPanel/GameMenu/
+   LeftDrawer/TechPanel/DiplomacyPanel/EventToast/GreatPersonToast/AdviceBanner/LoginScreen/
+   NationNamePrompt/MapCanvas의 HTML 팝업까지 전부 통일. 결과적으로 지도(Canvas, 별개 취급)를 뺀
+   모든 UI 요소가 어두운 갈색/금테/세리프 폰트로 하나의 "역사서"처럼 보이게 됨.
+- **버그 발견 및 수정(오늘 재테마 중 CDP로 발견)**: "세계 정세" 목록에 `"동쪽 부족 연맹 · 동쪽 부족
+  연맹"`처럼 자기 자신과 짝지어진 이상한 항목이 나타남. 원인: `DiplomacyPanel.vue`의 `onMounted`가
+  `fetchRivals()`와 `fetchWorldRelationships()`를 `await` 없이 동시에 호출했는데, 세션이 새로 생성된
+  순간에는 두 요청 모두 `diplomacy_service._get_rivals`의 "라이벌 3개가 하나도 없으면 시딩" 로직을
+  거의 동시에 통과하면서 각자 3개씩, 총 6개(라이벌당 2개 중복)를 만들어버림 — 그 중복된 rival_id 리스트로
+  `itertools.combinations`를 돌리니 (a,a) 같은 자기 짝이 나온 것. 세 군데를 고침: (1)
+  `DiplomacyPanel.vue`의 두 호출을 순차 `await`로 변경(실제 트리거 제거) (2) `_get_rivals`를
+  "하나도 없으면 3개 다 시딩"에서 "이미 있는 rival_id는 건너뛰고 없는 것만 시딩"으로 변경(경합 폭을
+  줄임) (3) `_get_relationships`가 `set(rival_ids)`로 중복 제거 후 조합을 만들도록 방어 코드 추가
+  (근본 원인이 남아있어도 화면에 이상한 쌍은 절대 안 뜨게). 이미 오염된 테스트 계정 2개의 중복 행은
+  수동 정리. 회귀 테스트 2개 추가(`test_get_rivals_is_idempotent_and_only_seeds_missing_ones`,
+  `test_world_relationships_never_self_pair_even_with_duplicate_rival_rows`) — 백엔드 테스트 총
+  86개로 증가.
+- CDP로 전체 플로우(회원가입 → 도시 이름 짓기 → 게임 화면 → HUD/서랍/메뉴 4개 탭 → 영토 구매 → 도시
+  건설 → 세계 정세) 끝까지 재검증 완료.
+
+## 라이벌 성향 + 라이벌 자체 도시 확장 (2026-09-22, 이어서)
+
+"관찰의 재미를 늘리자"는 방향으로 두 가지를 추가 제안했고 사용자가 둘 다 채택: (1) 라이벌 국가별
+성향 부여 (2) 라이벌도 스스로 수도 외 도시를 짓게 하기. 원래 CLAUDE.md 맨 위 한 줄 요약에 있던
+"다른 국가들도 각자 성향에 따라 완전 자율로 발전한다"가 실제로는 구현이 안 돼 있던 부분 — 이번에 채움.
+
+- **라이벌 성향(personality)**: `app/data/rivals.py`에 라이벌마다 고정 성향 배정 — 동쪽 부족 연맹=
+  호전적(`aggressive`), 북방 왕국=경제 중심(`economic`), 남방 도시국가=고립주의(`isolationist`).
+  `PERSONALITY_TRAITS` 딕셔너리가 성향별로 5가지 배수(`aggression_multiplier`,
+  `expansion_multiplier`, `world_war_multiplier`, `alliance_multiplier`,
+  `city_founding_multiplier`)를 정의 — 기존 확률 상수들은 그대로 두고 성향이 그 위에 곱해지는
+  방식이라, 라이벌 스탯(경제력 기반 확장, 상대 군사력 기반 침략 등)이 여전히 핵심 동력이고 성향은
+  "그 위에 얹는 성격"으로만 작동함. `RivalNation`에 `personality` 컬럼 추가, `to_dict()`에 포함.
+  적용된 곳: `diplomacy_service.advance_rivals`의 선제 선전포고 확률, `advance_world`의 라이벌간
+  전쟁/동맹 확률(양쪽 성향의 평균), `session_manager._resolve_territory_changes`의 영토 확장 확률과
+  도시 건설 확률. `DiplomacyPanel.vue`에 성향 배지 표시(⚔️호전적/💰경제 중심/🛡️고립주의).
+- **라이벌 자체 도시 건설**: 그동안 도시 설립은 플레이어 전용 기능이라 라이벌은 영원히 수도 하나뿐인
+  비대칭이 있었음(영토 구매·인구 상한·멸망은 전부 플레이어·라이벌 동일 규칙이었는데 이것만 예외).
+  `models/city.py`에 `owner` 컬럼 추가(`"player"` 또는 라이벌의 rival_id, 기존 행은 전부
+  `"player"`로 마이그레이션). `city_service.found_rival_city()`가 플레이어의 `found_city()`와
+  같은 거리 규칙(수도/다른 도시와 체비쇼프 거리 3칸 이상)을 그대로 쓰되 무료이고 위치를 라이벌이
+  직접 무작위로 고름. 트리거 조건: 보유 타일 `RIVAL_CITY_MIN_TILES=20`개 이상 + 기존 추가 도시
+  `RIVAL_CITY_MAX_EXTRA_CITIES=2`개 미만 + 매달 `RIVAL_CITY_BASE_CHANCE_PER_MONTH=0.03 * 성향 배수`
+  확률. `session_manager._resolve_territory_changes`가 매달 라이벌마다 검사하고, 성공하면
+  `cities_updated` 브로드캐스트 + 게임 로그에 기록. `MapCanvas.vue`는 도시를 그릴 때 이제 무조건
+  플레이어 색이 아니라 `owner`에 맞는 색(플레이어=파랑, 라이벌=해당 라이벌 고유색)으로 렌더링.
+- 기존 dev DB에 이미 있던 `personality`/`owner` 컬럼은 Alembic 마이그레이션으로 추가 후, 기존
+  라이벌 행에 대해 rival_id 기준으로 직접 백필(그냥 `server_default`만 믿으면 전부 같은 성향이
+  됐을 것 — 새 컬럼 추가 시 기존 데이터를 의미있게 채우는 건 마이그레이션과 별개의 수동 단계로
+  항상 챙길 것).
+- 테스트 9개 추가(성향 배정/배수 적용 2개, `found_rival_city` 3개, `_resolve_territory_changes`의
+  라이벌 도시 건설·상한 2개 등) — 백엔드 테스트 총 95개. CDP로 세 라이벌의 성향 배지가 화면에 정확히
+  표시되는 것까지 확인.
+
+## 자잘한 업그레이드 모음 (2026-09-22, 이어서)
+
+"추가하고 업그레이드 할 거 있으면 다 해줘"라는 포괄적 요청에 4가지를 골라서 처리. 전부 무료
+오픈소스/기존 인프라만 사용(유료 서비스 추가 없음).
+
+- **WebSocket 자동 재연결**: `stores/clock.js`가 그동안 연결이 끊겨도(백엔드 재시작, 네트워크 순단 등)
+  아무 반응 없이 그냥 멈춰 있었음 — 오래 켜두는 게임 특성상 눈에 안 띄는 채로 "게임이 멈춘 것처럼"
+  보일 수 있는 실제 견고성 문제였음. `ws.onclose`에서 지수 백오프(1초→최대 15초)로 재연결 시도,
+  `this.socket !== ws` 체크로 의도적 `disconnect()`(로그아웃 등)와 예기치 않은 끊김을 구분해서
+  의도적 종료는 재연결 안 함. `ClockPanel.vue`에 "● 재연결 중..." 표시 추가(깜빡이는 애니메이션)로
+  플레이어가 지금 무슨 일이 일어나는지 알 수 있게 함.
+- **GitHub Actions CI**: `.github/workflows/backend-tests.yml` 추가 — `backend/` 변경이 포함된
+  push/PR마다 자동으로 pytest 전체 실행. 격리된 테스트 DB만 쓰므로 완전히 안전.
+- **라이벌끼리의 전쟁도 이제 영토가 움직임 + 서로 멸망 가능**: 그동안 "세계 정세"의 라이벌간 전쟁은
+  스탯 피해만 주고 영토는 그대로였음(의도적 단순화로 문서화해뒀던 부분). `diplomacy_service.
+  advance_world()`가 이제 `(news, world_war_outcomes)`를 반환 — `world_war_outcomes`는 그 달에
+  전투가 벌어진 라이벌 쌍마다 (승자, 패자, 승자 이름, 패자 이름) 튜플. `session_manager.
+  _resolve_territory_changes`가 이걸 받아서 플레이어-라이벌 전쟁과 완전히 같은 방식으로
+  `territory_service.capture_tile(..., allow_elimination=True)`를 호출 — 국경이 실제로 맞닿아
+  있어야만 침략 가능하다는 규칙, 최후의 저항 시 멸망 가능하다는 규칙 모두 동일하게 적용됨(플레이어만
+  예외적으로 멸망 안 하는 규칙은 그대로 — 라이벌끼리는 둘 다 멸망 가능).
+- **동맹의 상호방위**: 동맹이 "그냥 플레이버"였던 걸 실제로 의미 있게 만듦. 플레이어가 어떤 라이벌과
+  전쟁 중이고, 그 라이벌에게 동맹국이 있으면, 그 동맹국도 매달 성향에 따라 스케일되는 확률
+  (`MUTUAL_DEFENSE_CHANCE_PER_MONTH=0.15 * aggression_multiplier`, 최대 40%)로 참전할 수 있음
+  — `diplomacy_service.advance_rivals`에서 매달 라이벌간 동맹 관계를 조회해서 확인. 기존 "무작위
+  선제 선전포고" 확률과는 별개 경로(동맹 참전이 먼저 체크되고, 안 걸리면 기존 기회주의적 침략 확률로
+  넘어감).
+- 테스트 6개 추가(라이벌간 전투 결과 반환, 상호방위 발동/미발동, 세션 매니저의 라이벌간 영토 침략
+  처리) — 백엔드 테스트 총 99개. 실제 오래 플레이한 세션(`max12max`)에 30개월치 전체 파이프라인을
+  직접 돌려서 크래시 없이 통과하는 것 확인, 그 와중에 실제로 라이벌 하나가 동맹을 맺는 것도 게임
+  로그에서 확인됨.
+
+## 테크트리 확장 + 맵 다양성 + 자원 시스템 (2026-09-22, 이어서)
+
+"연구 테크트리 전부 다 만들어도 될듯" + "맵도 매번 다르게, 자원도 다양하게 해서 도시 위치에 이점이
+있게" 두 가지 요청을 함께 처리.
+
+- **테크트리 6→20개 확장**: `tech_service.py`의 `TECH_TREE`에 14개 신규 노드 추가(기존 6개는
+  id/cost/duration/effects 전부 그대로 — 기존 세이브의 `researched_techs`가 콤마로 이어붙인 id
+  문자열이라 절대 안 바뀌어야 함). 경제/군사/학문 세 갈래가 서로 교차 선행조건으로 얽히는 4단계
+  구조: 2단계(`currency`/`horseback_riding`/`astronomy`, 각 1단계 기술 하나 선행) → 3단계
+  (`philosophy`/`road_network`/`fortification`/`bureaucracy`/`trade_routes`/`cavalry_tactics`,
+  일부는 선행 2개 필요) → 4단계(`university`/`banking`/`steel_weapons`/`printing_press`/
+  `gunpowder`, 비용 4200~5600·연구기간 14~16개월로 가장 비쌈). 검증 테스트 5개 추가: 중복 id 없음,
+  모든 prereq가 실제 존재하는 id를 가리키는지, 사이클이 없는지(위상 정렬 가능), 기존 6개가
+  바이트 단위로 안 바뀌었는지, `agriculture→...→banking` 8단계 체인이 실제로 끝까지 연구되는지.
+  프론트 `TechPanel.vue`는 코드 수정 없이 그대로 20개를 스크롤 리스트로 렌더링(CDP로 확인) —
+  다만 이 시점부터 "10개 넘으면 그래프 UI로 전환" 기준을 넘었으므로, 다음에 테크트리 UI 자체를
+  만질 일이 있으면 문명 스타일 노드+연결선 그래프 전환을 먼저 고려할 것(TODO, 이번엔 범위 밖이라
+  안 건드림).
+- **맵 프리셋(지형 다양성)**: 그동안 `map_service._generate_map`이 물/산/숲/사막 클러스터 파라미터가
+  완전히 고정이라 매판 "느낌"이 똑같았음. `MAP_PRESETS` 5종(balanced/archipelago/highlands/arid/
+  woodlands, 각각 지형별 시드 개수·크기만 다름) 중 새 세션마다 `random.choice`로 하나 골라 사용.
+  기존 `_grow_cluster` 알고리즘 자체는 그대로, 파라미터만 프리셋에서 읽어옴.
+- **수도 위치 랜덤화**: 그동안 플레이어 수도가 항상 정확히 `(width//2, height//2)`였음(라이벌 3곳은
+  이미 랜덤 밴드였는데 플레이어만 예외). 이제 `_pick_capital_position`이 중앙 안전지대
+  (`CAPITAL_X_FRAC_RANGE`/`CAPITAL_Y_FRAC_RANGE` = 0.35~0.65)에서 무작위로 뽑되, 라이벌 수도들과
+  체비쇼프 거리 `MIN_CAPITAL_RIVAL_DISTANCE=4` 이상 떨어질 때까지 최대 30회 재시도(둘 다 3x3 블록이라
+  4칸 이상이면 절대 안 겹침) — 라이벌 배치를 먼저 하고 그 결과를 알고 나서 플레이어 수도를 고르는
+  순서로 바꿈. `test_map_service.py`의 기존 "수도는 항상 정중앙" 테스트를 "수도는 안전지대 안,
+  라이벌과 최소 거리 이상"으로 교체.
+- **자원 시스템**: `RESOURCE_TYPES` 7종 — 금광/철광(산, 경제/군사), 비옥한 토양/말(평원, 식량/군사),
+  목재(숲, 경제), 향신료(사막, 경제), 어장(물, 식량). 지형이 일치하는 타일마다
+  `RESOURCE_CHANCE_PER_TILE=5%` 확률로 배치(`_place_resources`), 수도/라이벌 수도 타일 자체는
+  제외(도시 아이콘과 안 겹치게). 맵 데이터에 `resources: [{x,y,type}]`로 포함, `/map` 엔드포인트가
+  그대로 프론트에 전달. **효과 적용**: `session_manager._compute_resource_bonus`가 수도 + 플레이어가
+  세운 모든 도시 기준 반경 1칸 안의 자원을 전부 합산해서 `{economy, military, food}` 보너스 딕셔너리를
+  만들고, `advance_nation`이 매달 이걸 기존 랜덤 변동(-4~6)/식량 생산 공식에 그대로 더함 — 즉 "도시를
+  어디에 짓느냐"가 매달 실질적인 스탯 차이를 만듦(사용자가 원한 "위치의 이점을 보고 도시를 짓는" 문명식
+  플레이 반영). 라이벌은 이 보너스를 받지 않음(라이벌 스탯은 타일 단위가 아니라 국가 전체 집계값 하나라
+  자연스럽게 적용 불가 — 기존에 이미 문서화된 "라이벌은 단순화" 패턴과 동일 선상).
+- **프론트**: `stores/map.js`가 `resources` 배열과 `resourcesNear(x,y,radius)` 헬퍼를 들고 옴.
+  `MapCanvas.vue`가 지형 위에 자원 이모지를 그리고(`RESOURCE_META`, 백엔드 `RESOURCE_TYPES`와 이름/
+  아이콘만 미러링), 도시 건설 팝업에 "인근 자원: 🌾 비옥한 토양" 같은 목록을 추가해 클릭한 타일
+  주변에 뭐가 있는지 미리 보여줌(자원이 없으면 "인근에 자원이 없습니다").
+- **회귀로 깨진 테스트 수정**: `test_api_smoke.py`의 도시 설립 스모크 테스트가 "수도에서 동/서/남/북
+  5칸"이라는 고정 오프셋으로 목표 타일을 정하고 있었는데, 수도 위치와 지형이 이제 랜덤이라 그 경로가
+  물에 막히거나 라이벌 영토를 가로지를 수 있게 됨 — BFS로 수도에서 도달 가능한(물 아님, 남의 영토
+  아님) 가장 가까운 "체비쇼프 거리 3 이상" 타일을 찾아 그 경로를 따라 구매하도록 재작성(구매 대상
+  타일 중 이미 소유한 건 건너뜀). 5회 반복 실행으로 안정성 확인.
+- 백엔드 테스트 총 111개(신규: 테크트리 무결성/체인 5개, 맵 프리셋·수도 랜덤화·자원 배치 5개, 자원
+  보너스 계산 4개). CDP로 테크 패널 20개 노드 렌더링, 랜덤 프리셋/수도 위치 여러 세션에서 확인,
+  자원 타일이 지도에 그려지는 것과 도시 건설 팝업의 "인근 자원" 표시까지 실제 화면으로 검증 완료.
 
 ## 작업 방식
 

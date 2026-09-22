@@ -24,6 +24,7 @@ from app.services import map_service
 from app.services import auth_service
 from app.services import territory_service
 from app.services import city_service
+from app.services import log_service
 from app.services.nation_service import sync_land_capacity
 
 TICK_SECONDS = 1.0
@@ -169,6 +170,7 @@ async def delete_session(session_id: str):
     await city_service.delete_cities(session_id)
     await diplomacy_service.delete_world_data(session_id)
     await great_person_service.delete_history(session_id)
+    await log_service.delete_logs(session_id)
     session_manager.remove(session_id)
     return {"ok": True}
 
@@ -347,4 +349,16 @@ async def found_city_endpoint(session_id: str, body: CityFoundRequest):
     cities = await city_service.get_cities(session_id)
     await session.broadcast("nation_updated", {"nation": nation.to_dict()})
     await session.broadcast("cities_updated", {"cities": cities})
+    await log_service.add_log(
+        session_id,
+        session.clock.current_date["year"],
+        session.clock.current_date["month"],
+        "city",
+        f"새 도시 '{body.name}'을(를) 세웠습니다.",
+    )
     return {"nation": nation.to_dict(), "cities": cities, "cost": cost}
+
+
+@app.get("/api/session/{session_id}/log")
+async def get_game_log_endpoint(session_id: str):
+    return {"entries": await log_service.get_logs(session_id)}

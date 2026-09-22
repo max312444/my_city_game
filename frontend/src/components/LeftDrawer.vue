@@ -25,12 +25,12 @@ const open = ref(false)
   writing-mode: vertical-rl;
   text-orientation: mixed;
   padding: 16px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--panel-border);
   border-left: none;
   border-radius: 0 8px 8px 0;
-  background: rgba(0, 0, 0, 0.65);
-  color: white;
-  font-family: sans-serif;
+  background: var(--panel-bg);
+  color: var(--text);
+  font-family: var(--font-heading);
   font-size: 13px;
   font-weight: bold;
   cursor: pointer;
@@ -38,8 +38,8 @@ const open = ref(false)
   transition: left 0.25s ease;
 }
 .drawer-tab:hover {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  color: var(--accent-strong);
+  border-color: var(--accent);
 }
 .drawer-tab.open {
   left: 252px;

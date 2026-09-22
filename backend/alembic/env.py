@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db import Base, DATABASE_URL  # noqa: E402
 from app.models import (  # noqa: E402,F401
     city,
+    game_log,
     game_map,
     great_person,
     nation,

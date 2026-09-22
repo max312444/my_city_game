@@ -83,14 +83,14 @@ function choose(choiceId) {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(20, 20, 20, 0.92);
-  color: white;
-  font-family: sans-serif;
-  border-top: 1px solid #555;
+  background: var(--panel-bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  border-top: 1px solid var(--panel-border);
 }
 .timer-bar {
   height: 3px;
-  background: #4a90d9;
+  background: var(--accent);
   transition: width 0.2s linear;
 }
 .content {
@@ -106,21 +106,23 @@ function choose(choiceId) {
   min-width: 0;
 }
 .title {
+  font-family: var(--font-heading);
   font-weight: bold;
   font-size: 15px;
   margin-bottom: 4px;
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--accent-strong);
 }
 .timer {
-  color: #ffb84a;
+  color: var(--accent);
   font-size: 13px;
   font-weight: normal;
 }
 .description {
   font-size: 13px;
-  color: #ccc;
+  color: var(--text-dim);
 }
 .choices {
   display: flex;
@@ -130,15 +132,16 @@ function choose(choiceId) {
 button {
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px solid #555;
-  background: #333;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   cursor: pointer;
   font-size: 13px;
   white-space: nowrap;
+  font-family: var(--font-body);
 }
 button:hover {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 </style>

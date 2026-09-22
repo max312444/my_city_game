@@ -60,7 +60,7 @@ const needsName = computed(
 .app {
   width: 100vw;
   height: 100vh;
-  background: #1a1a1a;
+  background: var(--bg-app);
 }
 .right-column {
   position: fixed;

@@ -1,5 +1,29 @@
+import pytest
+
 from app.core import session_manager
-from app.services import map_service, nation_service, territory_service
+from app.db import async_session_maker
+from app.models.territory import OwnedTile
+from app.services import city_service, map_service, nation_service, territory_service
+
+
+def test_compute_resource_bonus_sums_only_resources_near_capital_or_cities():
+    map_data = {
+        "capital": {"x": 5, "y": 5},
+        "resources": [
+            {"x": 5, "y": 6, "type": "gold_mine"},  # adjacent to capital -> counts
+            {"x": 20, "y": 20, "type": "iron_ore"},  # far from everything -> ignored
+            {"x": 10, "y": 10, "type": "timber"},  # adjacent to the city below -> counts
+        ],
+    }
+    player_cities = [{"x": 10, "y": 11}]
+
+    bonus = session_manager._compute_resource_bonus(map_data, player_cities)
+    assert bonus["economy"] == pytest.approx(6.0 + 4.0)
+    assert "military" not in bonus  # iron_ore was too far to count
+
+
+def test_compute_resource_bonus_with_no_resources_returns_empty_dict():
+    assert session_manager._compute_resource_bonus({"capital": {"x": 0, "y": 0}}, []) == {}
 
 
 async def test_resolve_territory_changes_no_war_no_capture(session_id):
@@ -7,9 +31,12 @@ async def test_resolve_territory_changes_no_war_no_capture(session_id):
     map_data = await map_service.get_or_create_map(session_id)
     rivals = [{"rival_id": rc["rival_id"], "economy": 0.0} for rc in map_data["rival_capitals"]]
 
-    reports, changed = await session_manager._resolve_territory_changes(session_id, rivals, [])
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, rivals, [], [], {"year": 1, "month": 1}
+    )
     assert reports == []
     assert changed is False  # 0 economy -> 0% expansion chance, and no war outcomes to resolve
+    assert cities_changed is False  # no rival owns anywhere near enough tiles yet
 
 
 async def test_resolve_territory_changes_reports_and_broadcasts_capture(session_id):
@@ -22,7 +49,109 @@ async def test_resolve_territory_changes_reports_and_broadcasts_capture(session_
     await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 13, 10)  # owns x:12-14,y:9-11
 
     war_outcomes = [("player", "eastern_tribes", "테스트라이벌")]
-    reports, changed = await session_manager._resolve_territory_changes(session_id, [], war_outcomes)
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, [], war_outcomes, [], {"year": 1, "month": 1}
+    )
 
     assert changed is True
     assert any("테스트라이벌" in r and "점령" in r for r in reports)
+
+
+async def test_resolve_territory_changes_handles_world_war_outcomes(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    await territory_service.ensure_rival_territory(session_id, "eastern_tribes", 10, 10)  # owns x:9-11,y:9-11
+    await territory_service.ensure_rival_territory(session_id, "northern_kingdom", 13, 10)  # owns x:12-14,y:9-11
+
+    world_war_outcomes = [("eastern_tribes", "northern_kingdom", "동쪽 부족 연맹", "북방 왕국")]
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, [], [], world_war_outcomes, {"year": 1, "month": 1}
+    )
+    assert changed is True
+    assert any("북방 왕국" in r and "침략" in r for r in reports)
+
+    all_tiles = await territory_service.get_all_tiles(session_id)
+    owners = [t["owner"] for t in all_tiles]
+    assert owners.count("eastern_tribes") == 10  # 9 original + 1 captured
+    assert owners.count("northern_kingdom") == 8  # 9 original - 1 lost
+
+
+async def test_resolve_territory_changes_can_found_a_rival_city(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    # get_or_create_map already auto-seeds eastern_tribes' usual radius-1 (9 tile)
+    # block at whatever capital position it randomly picks — ensure_rival_territory
+    # itself is idempotent and would no-op a second call, so to reach past
+    # RIVAL_CITY_MIN_TILES we add the surrounding ring directly instead (radius 2-3,
+    # skipping the already-owned inner 3x3 to avoid duplicate tile rows).
+    map_data = await map_service.get_or_create_map(session_id)
+    eastern_capital = next(rc for rc in map_data["rival_capitals"] if rc["rival_id"] == "eastern_tribes")
+    cx, cy = eastern_capital["x"], eastern_capital["y"]
+    async with async_session_maker() as db:
+        for dx in range(-3, 4):
+            for dy in range(-3, 4):
+                if max(abs(dx), abs(dy)) <= 1:
+                    continue  # already seeded by get_or_create_map
+                db.add(OwnedTile(session_id=session_id, x=cx + dx, y=cy + dy, owner="eastern_tribes"))
+        await db.commit()
+
+    rivals = [
+        {
+            "rival_id": rc["rival_id"],
+            "name": rc["name"],
+            "economy": 0.0,
+            "relationship": "peace",
+            "personality": "economic",
+        }
+        for rc in map_data["rival_capitals"]
+    ]
+    monkeypatch.setattr(session_manager.random, "random", lambda: 0.0)  # clears the founding roll
+
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, rivals, [], [], {"year": 5, "month": 6}
+    )
+    assert cities_changed is True
+    assert any("새 도시" in r and "동쪽 부족 연맹" in r for r in reports)
+
+    cities = await city_service.get_cities(session_id)
+    rival_cities = [c for c in cities if c["owner"] == "eastern_tribes"]
+    assert len(rival_cities) == 1
+
+
+async def test_resolve_territory_changes_caps_rival_extra_cities(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    map_data = await map_service.get_or_create_map(session_id)
+    eastern_capital = next(rc for rc in map_data["rival_capitals"] if rc["rival_id"] == "eastern_tribes")
+    await territory_service.ensure_rival_territory(
+        session_id, "eastern_tribes", eastern_capital["x"], eastern_capital["y"], radius=3
+    )
+    # Already at the cap before this tick runs — each pre-seeded city is spaced at
+    # least MIN_DISTANCE_FROM_OTHER_CITIES from both the capital and each other.
+    for i in range(city_service.RIVAL_CITY_MAX_EXTRA_CITIES):
+        offset = city_service.MIN_DISTANCE_FROM_OTHER_CITIES * (i + 1)
+        await city_service.found_rival_city(
+            session_id,
+            "eastern_tribes",
+            eastern_capital,
+            {(eastern_capital["x"] + offset, eastern_capital["y"])},
+            {"year": 1, "month": 1},
+        )
+
+    rivals = [
+        {
+            "rival_id": rc["rival_id"],
+            "name": rc["name"],
+            "economy": 0.0,
+            "relationship": "peace",
+            "personality": "economic",
+        }
+        for rc in map_data["rival_capitals"]
+    ]
+    monkeypatch.setattr(session_manager.random, "random", lambda: 0.0)
+
+    reports, changed, cities_changed = await session_manager._resolve_territory_changes(
+        session_id, rivals, [], [], {"year": 5, "month": 6}
+    )
+    assert cities_changed is False  # already at the cap, no third city founded
+
+    cities = await city_service.get_cities(session_id)
+    rival_cities = [c for c in cities if c["owner"] == "eastern_tribes"]
+    assert len(rival_cities) == city_service.RIVAL_CITY_MAX_EXTRA_CITIES

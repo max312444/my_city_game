@@ -7,6 +7,7 @@ const API_BASE = 'http://localhost:8000'
 export const useDiplomacyStore = defineStore('diplomacy', {
   state: () => ({
     rivals: [],
+    worldRelationships: [],
     error: '',
     lastReports: [],
     reportsTimerId: null,
@@ -17,6 +18,15 @@ export const useDiplomacyStore = defineStore('diplomacy', {
       const res = await fetch(`${API_BASE}/api/session/${sessionId}/diplomacy`)
       const data = await res.json()
       this.rivals = data.rivals
+    },
+    async fetchWorldRelationships() {
+      const sessionId = useSessionStore().sessionId
+      const res = await fetch(`${API_BASE}/api/session/${sessionId}/diplomacy/world`)
+      const data = await res.json()
+      this.worldRelationships = data.relationships
+    },
+    rivalName(rivalId) {
+      return this.rivals.find((r) => r.rival_id === rivalId)?.name || rivalId
     },
     updateRivals(rivals) {
       this.rivals = rivals

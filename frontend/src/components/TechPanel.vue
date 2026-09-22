@@ -34,7 +34,7 @@ const prereqNames = computed(() => (tech) =>
 </script>
 
 <template>
-  <div class="tech-panel">
+  <div class="tech-panel panel">
     <div class="panel-title">테크트리</div>
     <div v-if="techStore.error" class="error">{{ techStore.error }}</div>
     <div
@@ -72,11 +72,7 @@ const prereqNames = computed(() => (tech) =>
 
 <style scoped>
 .tech-panel {
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
   padding: 12px;
-  border-radius: 8px;
-  font-family: sans-serif;
   width: 220px;
   flex-shrink: 0;
 }
@@ -85,27 +81,27 @@ const prereqNames = computed(() => (tech) =>
   margin-bottom: 8px;
 }
 .error {
-  color: #ff8080;
+  color: var(--text-negative);
   font-size: 12px;
   margin-bottom: 8px;
 }
 .tech-card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid #444;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--panel-border-soft);
   border-radius: 6px;
   padding: 8px;
   margin-bottom: 8px;
 }
 .tech-card.done {
-  border-color: #4a90d9;
-  background: rgba(74, 144, 217, 0.15);
+  border-color: var(--accent);
+  background: var(--accent-dim);
 }
 .tech-card.locked {
   opacity: 0.5;
 }
 .tech-card.active {
-  border-color: #ffb84a;
-  background: rgba(255, 184, 74, 0.12);
+  border-color: var(--accent-strong);
+  background: rgba(255, 209, 102, 0.12);
 }
 .tech-name {
   font-weight: bold;
@@ -116,15 +112,16 @@ const prereqNames = computed(() => (tech) =>
 }
 .badge.done-badge {
   font-size: 10px;
-  background: #4a90d9;
+  background: var(--accent);
+  color: #241d12;
   padding: 1px 6px;
   border-radius: 4px;
   font-weight: normal;
 }
 .badge.active-badge {
   font-size: 10px;
-  background: #ffb84a;
-  color: #222;
+  background: var(--accent-strong);
+  color: #241d12;
   padding: 1px 6px;
   border-radius: 4px;
   font-weight: normal;
@@ -132,12 +129,12 @@ const prereqNames = computed(() => (tech) =>
 }
 .tech-desc {
   font-size: 11px;
-  color: #ccc;
+  color: var(--text-dim);
   margin-top: 2px;
 }
 .tech-prereq {
   font-size: 11px;
-  color: #999;
+  color: var(--text-faint);
   margin-top: 4px;
 }
 .tech-footer {
@@ -148,20 +145,21 @@ const prereqNames = computed(() => (tech) =>
 }
 .tech-cost {
   font-size: 12px;
-  color: #ffd166;
+  color: var(--accent-strong);
 }
 button {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #555;
-  background: #333;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   cursor: pointer;
   font-size: 12px;
+  font-family: var(--font-body);
 }
 button:hover:not(:disabled) {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 button:disabled {
   opacity: 0.4;

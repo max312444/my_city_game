@@ -1,28 +1,49 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useNationStore } from '../stores/nation'
 import { useGreatPeopleStore } from '../stores/greatPeople'
+import { useGameLogStore } from '../stores/gameLog'
 import { useSessionStore } from '../stores/session'
 import { useClockStore } from '../stores/clock'
 
+const API_BASE = 'http://localhost:8000'
+
 const nationStore = useNationStore()
 const greatPeopleStore = useGreatPeopleStore()
+const gameLogStore = useGameLogStore()
 const sessionStore = useSessionStore()
 
 const open = ref(false)
 const tab = ref('stats')
+const bodyRef = ref(null)
 
 const newCityName = ref('')
 const renameError = ref('')
 const renaming = ref(false)
+const savedMessage = ref('')
+const restarting = ref(false)
+
+const LOG_ICONS = {
+  tech: '📚',
+  event: '⚡',
+  great_person: '👑',
+  war: '⚔️',
+  world: '🌍',
+  city: '🏛️',
+}
 
 function toggle() {
   open.value = !open.value
 }
 
-function selectTab(t) {
+async function selectTab(t) {
   tab.value = t
   if (t === 'greatpeople') greatPeopleStore.fetchHistory()
+  if (t === 'log') {
+    await gameLogStore.fetchLog()
+    await nextTick()
+    if (bodyRef.value) bodyRef.value.scrollTop = bodyRef.value.scrollHeight
+  }
 }
 
 async function rename() {
@@ -31,14 +52,11 @@ async function rename() {
   renameError.value = ''
   renaming.value = true
   try {
-    const res = await fetch(
-      `http://localhost:8000/api/session/${sessionStore.sessionId}/nation/name`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmed }),
-      },
-    )
+    const res = await fetch(`${API_BASE}/api/session/${sessionStore.sessionId}/nation/name`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: trimmed }),
+    })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || '변경에 실패했습니다')
     nationStore.applyUpdate(data)
@@ -50,33 +68,49 @@ async function rename() {
   }
 }
 
-function logout() {
+function goToMainScreen() {
   open.value = false
   useClockStore().disconnect()
   sessionStore.setSessionId(null)
 }
 
-onMounted(() => {
-  greatPeopleStore.fetchHistory()
-})
+function showSaved() {
+  savedMessage.value = '게임은 매달 자동으로 저장됩니다 — 현재 상태가 이미 저장되어 있습니다.'
+  setTimeout(() => {
+    savedMessage.value = ''
+  }, 3500)
+}
+
+async function restart() {
+  const confirmed = window.confirm('기존의 데이터가 사라집니다. 그래도 진행하시겠습니까?')
+  if (!confirmed) return
+  restarting.value = true
+  try {
+    await fetch(`${API_BASE}/api/session/${sessionStore.sessionId}`, { method: 'DELETE' })
+    window.location.reload()
+  } catch {
+    restarting.value = false
+  }
+}
 </script>
 
 <template>
   <div class="menu-wrap">
-    <button class="menu-btn" @click="toggle">☰ 메뉴</button>
+    <button class="menu-btn panel" @click="toggle">☰ 메뉴</button>
 
     <div v-if="open" class="overlay" @click.self="open = false">
-      <div class="modal">
+      <div class="modal panel">
         <div class="tabs">
           <button :class="{ active: tab === 'stats' }" @click="selectTab('stats')">국가 통계</button>
           <button :class="{ active: tab === 'greatpeople' }" @click="selectTab('greatpeople')">
             위인 명예전당
           </button>
+          <button :class="{ active: tab === 'log' }" @click="selectTab('log')">게임 로그</button>
           <button :class="{ active: tab === 'settings' }" @click="selectTab('settings')">설정</button>
           <button class="close-btn" @click="open = false">✕</button>
         </div>
 
-        <div class="body">
+        <div class="body" ref="bodyRef">
           <div v-if="tab === 'stats'" class="stats-view">
             <div class="stat-row">
               <span class="label">인구</span><span class="value">{{ nationStore.nation.population }}</span>
@@ -162,6 +196,17 @@ onMounted(() => {
             </div>
           </div>
 
+          <div v-else-if="tab === 'log'" class="log-view">
+            <div v-if="gameLogStore.entries.length === 0" class="empty">
+              아직 기록된 사건이 없습니다.
+            </div>
+            <div v-for="(e, i) in gameLogStore.entries" :key="i" class="log-row">
+              <span class="log-icon">{{ LOG_ICONS[e.category] || '•' }}</span>
+              <span class="log-date">{{ e.year }}년 {{ e.month }}월</span>
+              <span class="log-message">{{ e.message }}</span>
+            </div>
+          </div>
+
           <div v-else-if="tab === 'settings'" class="settings-view">
             <label class="field">
               <span>도시 이름 변경</span>
@@ -171,7 +216,16 @@ onMounted(() => {
               </div>
               <div v-if="renameError" class="error">{{ renameError }}</div>
             </label>
-            <button class="logout-btn" @click="logout">로그아웃</button>
+
+            <div class="section-divider"></div>
+
+            <button class="action-btn" @click="goToMainScreen">메인 화면으로 돌아가기</button>
+            <button class="action-btn" @click="showSaved">저장하기</button>
+            <div v-if="savedMessage" class="saved-message">{{ savedMessage }}</div>
+            <button class="restart-btn" :disabled="restarting" @click="restart">
+              {{ restarting ? '초기화 중...' : '다시하기' }}
+            </button>
+            <button class="logout-btn" @click="goToMainScreen">로그아웃</button>
           </div>
         </div>
       </div>
@@ -183,60 +237,51 @@ onMounted(() => {
 .menu-btn {
   width: 100%;
   padding: 10px;
-  border-radius: 8px;
-  border: 1px solid #555;
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
   cursor: pointer;
   font-size: 13px;
-  font-family: sans-serif;
+  font-family: var(--font-body);
 }
 .menu-btn:hover {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 30;
 }
 .modal {
-  background: #1a1d29;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  width: 360px;
+  width: 440px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  font-family: sans-serif;
-  color: white;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 .tabs {
   display: flex;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--panel-border-soft);
 }
 .tabs button {
   flex: 1;
   padding: 12px 6px;
   background: transparent;
   border: none;
-  color: #999;
+  color: var(--text-dim);
   cursor: pointer;
   font-size: 12px;
+  font-family: var(--font-body);
 }
 .tabs button.active {
-  color: #ffd166;
-  border-bottom: 2px solid #ffd166;
+  color: var(--accent-strong);
+  border-bottom: 2px solid var(--accent-strong);
   font-weight: bold;
 }
 .close-btn {
   flex: 0 0 36px;
-  color: #999;
+  color: var(--text-dim);
 }
 .body {
   padding: 16px;
@@ -250,31 +295,31 @@ onMounted(() => {
   padding: 3px 0;
 }
 .label {
-  color: #ccc;
+  color: var(--text-dim);
 }
 .value {
   font-weight: bold;
 }
 .expense {
-  color: #e07070;
+  color: var(--text-negative);
 }
 .negative {
-  color: #e04040;
+  color: var(--text-negative);
 }
 .warning {
   margin-top: 8px;
-  color: #ff6b6b;
+  color: var(--text-negative);
   font-weight: bold;
   font-size: 13px;
   text-align: center;
 }
 .section-divider {
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--panel-border-soft);
   margin: 8px 0;
 }
 .empty {
   font-size: 13px;
-  color: #999;
+  color: var(--text-faint);
 }
 .gp-row {
   display: flex;
@@ -282,22 +327,42 @@ onMounted(() => {
   gap: 8px;
   font-size: 13px;
   padding: 5px 0;
-  border-bottom: 1px solid #2a2d3a;
+  border-bottom: 1px solid var(--panel-border-soft);
 }
 .gp-title {
-  color: #ccc;
+  color: var(--text-dim);
   font-weight: normal;
 }
 .gp-date {
-  color: #999;
+  color: var(--text-dim);
   white-space: nowrap;
+}
+.log-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--panel-border-soft);
+}
+.log-icon {
+  flex: 0 0 auto;
+}
+.log-date {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-size: 12px;
+}
+.log-message {
+  color: var(--text);
 }
 .field {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
-  color: #cfd6ea;
+  color: var(--text-dim);
 }
 .rename-row {
   display: flex;
@@ -307,37 +372,78 @@ onMounted(() => {
   flex: 1;
   padding: 8px 10px;
   border-radius: 6px;
-  border: 1px solid #555;
-  background: #1c2030;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-family: var(--font-body);
 }
 .rename-row button {
   padding: 0 12px;
   border-radius: 6px;
-  border: 1px solid #555;
-  background: #333;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   cursor: pointer;
 }
 .rename-row button:hover {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .error {
-  color: #ff8080;
+  color: var(--text-negative);
   font-size: 12px;
 }
-.logout-btn {
-  margin-top: 20px;
+.action-btn {
+  margin-top: 8px;
   width: 100%;
   padding: 10px;
   border-radius: 6px;
-  border: 1px solid #555;
-  background: #3a2020;
-  color: #ff8080;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
   cursor: pointer;
+  font-family: var(--font-body);
+}
+.action-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.saved-message {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--accent-strong);
+  text-align: center;
+}
+.restart-btn {
+  margin-top: 8px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #a3702f;
+  background: rgba(163, 112, 47, 0.18);
+  color: #e0a860;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.restart-btn:hover {
+  background: rgba(163, 112, 47, 0.3);
+}
+.restart-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.logout-btn {
+  margin-top: 8px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #7a3535;
+  background: rgba(122, 53, 53, 0.18);
+  color: var(--text-negative);
+  cursor: pointer;
+  font-family: var(--font-body);
 }
 .logout-btn:hover {
-  background: #522828;
+  background: rgba(122, 53, 53, 0.3);
 }
 </style>

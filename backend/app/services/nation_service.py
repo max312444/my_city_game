@@ -77,10 +77,15 @@ async def delete_nation(session_id: str) -> None:
 
 
 async def advance_nation(
-    session_id: str, current_date: dict, owned_tile_count: int | None = None, city_count: int = 0
+    session_id: str,
+    current_date: dict,
+    owned_tile_count: int | None = None,
+    city_count: int = 0,
+    resource_bonus: dict | None = None,
 ) -> Nation:
     async with async_session_maker() as db:
         nation = await _get_or_create_nation(db, session_id)
+        resource_bonus = resource_bonus or {}
 
         if owned_tile_count is not None:
             nation.land_capacity = compute_land_capacity(owned_tile_count)
@@ -90,7 +95,7 @@ async def advance_nation(
         pop_factor = population_factor(nation.population)
         for stat in STATS:
             value = getattr(nation, stat)
-            delta = random.uniform(-4, 6)
+            delta = random.uniform(-4, 6) + resource_bonus.get(stat, 0.0)
             if stat in ("economy", "military") and delta > 0:
                 delta *= pop_factor
             setattr(nation, stat, _apply_delta(value, delta))
@@ -99,7 +104,11 @@ async def advance_nation(
         # nation grows; a starving one shrinks. Tech (agriculture, irrigation) raises
         # food_bonus, which raises production per capita. Founded cities add a small
         # nation-wide production bonus on top.
-        food_production = nation.population * (FOOD_PER_CAPITA_PRODUCTION + nation.food_bonus) * city_bonus
+        food_production = (
+            nation.population
+            * (FOOD_PER_CAPITA_PRODUCTION + nation.food_bonus + resource_bonus.get("food", 0.0))
+            * city_bonus
+        )
         food_consumption = nation.population * FOOD_PER_CAPITA_CONSUMPTION
         net_food = food_production - food_consumption
         nation.food_stock += net_food

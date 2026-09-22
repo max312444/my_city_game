@@ -14,9 +14,46 @@ async def test_get_or_create_map_is_idempotent_and_seeds_territory(session_id):
     assert len(player_tiles) == 9
 
 
-async def test_capital_is_at_map_center(session_id):
+async def test_capital_is_within_the_randomized_central_safe_zone(session_id):
     data = await map_service.get_or_create_map(session_id)
-    assert data["capital"] == {"x": data["width"] // 2, "y": data["height"] // 2}
+    cx, cy = data["capital"]["x"], data["capital"]["y"]
+    x_lo = int(map_service.CAPITAL_X_FRAC_RANGE[0] * data["width"]) - 1
+    x_hi = int(map_service.CAPITAL_X_FRAC_RANGE[1] * data["width"]) + 1
+    y_lo = int(map_service.CAPITAL_Y_FRAC_RANGE[0] * data["height"]) - 1
+    y_hi = int(map_service.CAPITAL_Y_FRAC_RANGE[1] * data["height"]) + 1
+    assert x_lo <= cx <= x_hi
+    assert y_lo <= cy <= y_hi
+
+    for rc in data["rival_capitals"]:
+        assert max(abs(cx - rc["x"]), abs(cy - rc["y"])) >= map_service.MIN_CAPITAL_RIVAL_DISTANCE
+
+
+async def test_capital_position_varies_across_sessions():
+    positions = set()
+    for i in range(8):
+        data = await map_service.get_or_create_map(f"capital-variety-{i}")
+        positions.add((data["capital"]["x"], data["capital"]["y"]))
+    assert len(positions) > 1
+
+
+async def test_map_preset_varies_across_sessions():
+    presets = set()
+    for i in range(10):
+        data = await map_service.get_or_create_map(f"preset-variety-{i}")
+        presets.add(data["preset"])
+    assert len(presets) > 1
+
+
+async def test_resources_are_placed_on_matching_terrain_and_avoid_capitals(session_id):
+    data = await map_service.get_or_create_map(session_id)
+    capital_spots = {(data["capital"]["x"], data["capital"]["y"])}
+    capital_spots.update((rc["x"], rc["y"]) for rc in data["rival_capitals"])
+
+    assert len(data["resources"]) > 0
+    for res in data["resources"]:
+        assert (res["x"], res["y"]) not in capital_spots
+        terrain = data["tiles"][res["y"]][res["x"]]
+        assert terrain in map_service.RESOURCE_TYPES[res["type"]]["terrain"]
 
 
 async def test_rival_capitals_are_within_bounds_and_each_seeded(session_id):

@@ -1,0 +1,74 @@
+/* Regnum shared theme — "역사서/양피지" (history-book) tone.
+   Every HUD component should read its colors/fonts from these variables instead
+   of hardcoding its own, so the whole UI reads as one book rather than a pile of
+   separately-designed panels bolted on over time. */
+
+:root {
+  /* surfaces */
+  --bg-app: #14100a;
+  --panel-bg: rgba(26, 21, 13, 0.92);
+  --panel-bg-soft: rgba(26, 21, 13, 0.74);
+  --panel-border: #8a6a35;
+  --panel-border-soft: rgba(168, 132, 62, 0.35);
+  --panel-radius: 8px;
+  --panel-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+
+  /* ink & accent */
+  --accent: #d4af6a;
+  --accent-strong: #ffd166;
+  --accent-dim: rgba(212, 175, 106, 0.28);
+
+  --text: #e9ddc7;
+  --text-dim: #ad9c7c;
+  --text-faint: #7d6f56;
+  --text-negative: #e2685a;
+  --text-positive: #8fbf78;
+
+  --font-heading: 'Noto Serif KR', serif;
+  --font-body: 'Noto Serif KR', serif;
+  --font-display: 'Cinzel', 'Noto Serif KR', serif;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(ellipse at 50% -10%, #2a2013 0%, var(--bg-app) 65%);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+/* Drop-in chrome for any HUD panel — pair with a component's own scoped class for
+   layout (width/position/padding), let this carry the shared look. */
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+.panel-title,
+.section-title {
+  font-family: var(--font-heading);
+  color: var(--accent-strong);
+  letter-spacing: 0.02em;
+}
+
+/* Scrollbars in the parchment tone instead of default OS chrome, so scroll panels
+   (game log, chronicles, lists) don't clash with the rest of the theme. */
+* {
+  scrollbar-color: var(--panel-border) rgba(0, 0, 0, 0.3);
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.25);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 4px;
+}

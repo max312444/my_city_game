@@ -14,8 +14,11 @@ class RivalNation(Base):
     economy: Mapped[float] = mapped_column(Float)
     stability: Mapped[float] = mapped_column(Float)
     military: Mapped[float] = mapped_column(Float)
-    relationship: Mapped[str] = mapped_column(String, default="peace")  # peace | war
+    relationship: Mapped[str] = mapped_column(String, default="peace")  # peace | war | defeated
     war_months: Mapped[int] = mapped_column(Integer, default=0)  # consecutive months of the current war
+    personality: Mapped[str] = mapped_column(
+        String, default="economic", server_default="economic"
+    )  # aggressive | economic | isolationist
 
     def to_dict(self):
         return {
@@ -26,4 +29,5 @@ class RivalNation(Base):
             "military": round(self.military, 1),
             "relationship": self.relationship,
             "war_months": self.war_months,
+            "personality": self.personality,
         }

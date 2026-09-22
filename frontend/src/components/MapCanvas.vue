@@ -4,11 +4,13 @@ import { useMapStore } from '../stores/map'
 import { useNationStore } from '../stores/nation'
 import { useDiplomacyStore } from '../stores/diplomacy'
 import { useTerritoryStore } from '../stores/territory'
+import { useCityStore } from '../stores/city'
 
 const mapStore = useMapStore()
 const nationStore = useNationStore()
 const diplomacyStore = useDiplomacyStore()
 const territoryStore = useTerritoryStore()
+const cityStore = useCityStore()
 const canvasRef = ref(null)
 
 // Two shades per terrain (low, high) — the noise layer blends between them so
@@ -36,13 +38,27 @@ const TERRAIN_SHADES = {
   ],
 }
 
+// Mirrors backend RESOURCE_TYPES (app/services/map_service.py) — the backend is the
+// source of truth for which stat each type boosts, this is just icon/label for display.
+const RESOURCE_META = {
+  gold_mine: { name: '금광', icon: '⛏️' },
+  iron_ore: { name: '철광', icon: '⚒️' },
+  fertile_soil: { name: '비옥한 토양', icon: '🌾' },
+  timber: { name: '목재', icon: '🌲' },
+  spice: { name: '향신료', icon: '🌶️' },
+  horses: { name: '말', icon: '🐎' },
+  fish: { name: '어장', icon: '🐟' },
+}
+
 const RIVAL_COLORS = ['#e0484d', '#a855f7', '#f97316', '#22c1a8']
 const PLAYER_COLOR = '#4a90d9'
 
 // tier: 0 village, 1 town, 2 city, 3 metropolis — driven by how many tiles an
 // owner (player or rival) actually holds, since everyone expands the same way
-// now: claiming tiles one at a time, adjacent to what they already own.
-const TIER_LABEL = ['마을', '소도시', '도시', '대도시']
+// now: claiming tiles one at a time, adjacent to what they already own. Shown as
+// an emoji badge instead of a Korean label so the name plate stays uncluttered.
+const TIER_EMOJI = ['🏘️', '🏙️', '🌆', '🌃']
+const MIN_CITY_DISTANCE = 3
 const TEXTURE_PX_PER_TILE = 24
 
 function tierFromTileCount(count) {
@@ -406,8 +422,43 @@ function drawCity(ctx, cx, cy, tileSize, tier, color, name, isPlayer, seed) {
   ctx.textAlign = 'center'
   ctx.shadowColor = 'rgba(0,0,0,0.8)'
   ctx.shadowBlur = 3
-  ctx.fillText(`${name} (${TIER_LABEL[tier]})`, cx, baseY + scale * 0.4)
+  ctx.fillText(`${TIER_EMOJI[tier]} ${name}`, cx, baseY + scale * 0.4)
   ctx.shadowBlur = 0
+}
+
+// A defeated rival's capital is drawn as quiet ruins instead of a living city —
+// dim rubble, no territory fill (they own nothing anymore), name struck through
+// with a skull to make the fall legible at a glance.
+function drawRuins(ctx, cx, cy, tileSize, name) {
+  const scale = tileSize * 1.3
+  const baseY = cy + scale * 0.4
+
+  ctx.beginPath()
+  ctx.ellipse(cx, baseY - scale * 0.02, scale * 0.85, scale * 0.28, 0, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(90,80,65,0.3)'
+  ctx.fill()
+
+  const rubble = [
+    { dx: -0.3, w: 0.22, h: 0.18 },
+    { dx: 0.05, w: 0.3, h: 0.28 },
+    { dx: 0.35, w: 0.18, h: 0.14 },
+  ]
+  rubble.forEach((b) => {
+    const bw = scale * b.w
+    const bh = scale * b.h
+    const bx = cx + scale * b.dx - bw / 2
+    const by = baseY - bh
+    ctx.fillStyle = 'rgba(90,86,80,0.55)'
+    ctx.fillRect(bx, by, bw, bh)
+    ctx.strokeStyle = 'rgba(40,38,34,0.5)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(bx, by, bw, bh)
+  })
+
+  ctx.fillStyle = 'rgba(220,214,200,0.75)'
+  ctx.font = `bold ${Math.max(10, tileSize * 0.36)}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.fillText(`💀 ${name} (멸망)`, cx, baseY + scale * 0.4)
 }
 
 // Kept in sync at the end of every draw() so the click handler can translate
@@ -417,6 +468,7 @@ let cachedTexture = null
 let cachedTextureKey = ''
 
 const purchasePrompt = ref(null)
+const foundCityPrompt = ref(null)
 
 function draw() {
   const canvas = canvasRef.value
@@ -456,17 +508,32 @@ function draw() {
     }
   }
 
+  for (const res of mapStore.resources) {
+    const meta = RESOURCE_META[res.type]
+    if (!meta) continue
+    const rx = offsetX + res.x * tileSize + tileSize / 2
+    const ry = offsetY + res.y * tileSize + tileSize / 2
+    ctx.font = `${tileSize * 0.55}px sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(meta.icon, rx, ry)
+  }
+
   const tilesByOwner = new Map()
   for (const t of territoryStore.allTiles) {
     if (!tilesByOwner.has(t.owner)) tilesByOwner.set(t.owner, [])
     tilesByOwner.get(t.owner).push(t)
   }
 
+  const colorForOwner = (owner) => {
+    if (owner === 'player') return PLAYER_COLOR
+    const idx = mapStore.rivalCapitals.findIndex((rc) => rc.rival_id === owner)
+    return RIVAL_COLORS[(idx >= 0 ? idx : 0) % RIVAL_COLORS.length]
+  }
+
   for (const [owner, tiles] of tilesByOwner) {
     if (owner === 'player') continue
-    const idx = mapStore.rivalCapitals.findIndex((rc) => rc.rival_id === owner)
-    const color = RIVAL_COLORS[(idx >= 0 ? idx : 0) % RIVAL_COLORS.length]
-    drawOwnedTerritory(ctx, tiles, offsetX, offsetY, tileSize, color)
+    drawOwnedTerritory(ctx, tiles, offsetX, offsetY, tileSize, colorForOwner(owner))
   }
   drawOwnedTerritory(ctx, tilesByOwner.get('player') || [], offsetX, offsetY, tileSize, PLAYER_COLOR)
 
@@ -476,10 +543,19 @@ function draw() {
     const tier = tierFromTileCount((tilesByOwner.get('player') || []).length)
     drawCity(ctx, cx, cy, tileSize, tier, PLAYER_COLOR, nationStore.nation.name || '수도', true, 0)
   }
+  for (const c of cityStore.cities) {
+    const cx = offsetX + c.x * tileSize + tileSize / 2
+    const cy = offsetY + c.y * tileSize + tileSize / 2
+    drawCity(ctx, cx, cy, tileSize, 0, colorForOwner(c.owner), c.name, c.owner === 'player', 0)
+  }
   mapStore.rivalCapitals.forEach((rc, i) => {
     const cx = offsetX + rc.x * tileSize + tileSize / 2
     const cy = offsetY + rc.y * tileSize + tileSize / 2
     const rival = diplomacyStore.rivals.find((r) => r.rival_id === rc.rival_id)
+    if (rival?.relationship === 'defeated') {
+      drawRuins(ctx, cx, cy, tileSize, rc.name)
+      return
+    }
     const tier = tierFromTileCount((tilesByOwner.get(rc.rival_id) || []).length)
     const color = RIVAL_COLORS[i % RIVAL_COLORS.length]
     drawCity(ctx, cx, cy, tileSize, tier, color, rc.name, false, i + 1)
@@ -490,9 +566,10 @@ function draw() {
     }
   })
 
-  // highlight the tile currently under the purchase prompt
-  if (purchasePrompt.value) {
-    const { x, y } = purchasePrompt.value
+  // highlight the tile currently under a purchase/founding prompt
+  const highlighted = purchasePrompt.value || foundCityPrompt.value
+  if (highlighted) {
+    const { x, y } = highlighted
     ctx.strokeStyle = '#ffd166'
     ctx.lineWidth = 3
     ctx.strokeRect(offsetX + x * tileSize + 1.5, offsetY + y * tileSize + 1.5, tileSize - 3, tileSize - 3)
@@ -513,17 +590,46 @@ function rivalNameFor(ownerId) {
   return rc ? rc.name : ownerId
 }
 
+function distanceOk(x1, y1, x2, y2, min) {
+  return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2)) >= min
+}
+
 function handleClick(e) {
   const { tx, ty } = tileFromEvent(e)
   if (tx < 0 || tx >= mapStore.width || ty < 0 || ty >= mapStore.height) {
     purchasePrompt.value = null
+    foundCityPrompt.value = null
     return
   }
   const owner = territoryStore.ownerAt(tx, ty)
   if (owner === 'player') {
     purchasePrompt.value = null
+    const isCapital = mapStore.capital && tx === mapStore.capital.x && ty === mapStore.capital.y
+    const existingCity = cityStore.cities.some((c) => c.x === tx && c.y === ty)
+    if (isCapital || existingCity) {
+      foundCityPrompt.value = null
+      return
+    }
+
+    const tooCloseToCapital =
+      mapStore.capital && !distanceOk(tx, ty, mapStore.capital.x, mapStore.capital.y, MIN_CITY_DISTANCE)
+    const tooCloseToCity = cityStore.cities.some((c) => !distanceOk(tx, ty, c.x, c.y, MIN_CITY_DISTANCE))
+    foundCityPrompt.value = {
+      x: tx,
+      y: ty,
+      screenX: layout.offsetX + tx * layout.tileSize + layout.tileSize / 2,
+      screenY: layout.offsetY + ty * layout.tileSize,
+      cost: cityStore.estimatedCost(),
+      error: tooCloseToCapital || tooCloseToCity ? '수도/다른 도시와 너무 가깝습니다' : null,
+      nearbyResources: mapStore.resourcesNear(tx, ty).map((r) => RESOURCE_META[r.type]).filter(Boolean),
+      name: '',
+      founding: false,
+      foundError: '',
+    }
+    draw()
     return
   }
+  foundCityPrompt.value = null
 
   const terrain = mapStore.tiles[ty][tx]
   const adjacent = territoryStore.isAdjacentToOwned(tx, ty)
@@ -570,6 +676,31 @@ function cancelPurchase() {
   draw()
 }
 
+async function confirmFoundCity() {
+  const p = foundCityPrompt.value
+  if (!p || p.error) return
+  const trimmed = p.name.trim()
+  if (!trimmed) {
+    p.foundError = '도시 이름을 입력해주세요'
+    return
+  }
+  p.founding = true
+  try {
+    await cityStore.found(p.x, p.y, trimmed)
+    foundCityPrompt.value = null
+    draw()
+  } catch (err) {
+    p.foundError = err.message
+  } finally {
+    if (foundCityPrompt.value) foundCityPrompt.value.founding = false
+  }
+}
+
+function cancelFoundCity() {
+  foundCityPrompt.value = null
+  draw()
+}
+
 function handleResize() {
   draw()
 }
@@ -578,6 +709,7 @@ onMounted(async () => {
   await mapStore.fetchMap()
   await diplomacyStore.fetchRivals()
   await territoryStore.fetchTerritory()
+  await cityStore.fetchCities()
   draw()
   window.addEventListener('resize', handleResize)
 })
@@ -589,6 +721,7 @@ onUnmounted(() => {
 watch(() => nationStore.nation.population, draw)
 watch(() => diplomacyStore.rivals, draw, { deep: true })
 watch(() => territoryStore.allTiles, draw, { deep: true })
+watch(() => cityStore.cities, draw, { deep: true })
 </script>
 
 <template>
@@ -617,6 +750,42 @@ watch(() => territoryStore.allTiles, draw, { deep: true })
       </div>
     </template>
   </div>
+
+  <div
+    v-if="foundCityPrompt"
+    class="purchase-popup"
+    :style="{ left: foundCityPrompt.screenX + 'px', top: foundCityPrompt.screenY + 'px' }"
+  >
+    <template v-if="foundCityPrompt.error">
+      <div class="popup-error">{{ foundCityPrompt.error }}</div>
+      <button class="popup-btn cancel" @click="cancelFoundCity">닫기</button>
+    </template>
+    <template v-else>
+      <div class="popup-title">도시 건설</div>
+      <input
+        v-model="foundCityPrompt.name"
+        class="popup-input"
+        maxlength="20"
+        placeholder="도시 이름"
+        @keyup.enter="confirmFoundCity"
+      />
+      <div class="popup-cost">💰 {{ foundCityPrompt.cost }}</div>
+      <div v-if="foundCityPrompt.nearbyResources.length" class="popup-resources">
+        인근 자원:
+        <span v-for="(r, i) in foundCityPrompt.nearbyResources" :key="i">{{ r.icon }} {{ r.name }}</span>
+      </div>
+      <div v-else class="popup-resources muted">인근에 자원이 없습니다</div>
+      <div v-if="foundCityPrompt.foundError" class="popup-error">
+        {{ foundCityPrompt.foundError }}
+      </div>
+      <div class="popup-actions">
+        <button class="popup-btn buy" :disabled="foundCityPrompt.founding" @click="confirmFoundCity">
+          건설
+        </button>
+        <button class="popup-btn cancel" @click="cancelFoundCity">취소</button>
+      </div>
+    </template>
+  </div>
 </template>
 
 <style scoped>
@@ -628,31 +797,57 @@ watch(() => territoryStore.allTiles, draw, { deep: true })
 .purchase-popup {
   position: fixed;
   transform: translate(-50%, -110%);
-  background: rgba(15, 17, 26, 0.95);
-  border: 1px solid #ffd166;
-  border-radius: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--panel-radius);
   padding: 10px 12px;
-  color: white;
-  font-family: sans-serif;
+  color: var(--text);
+  font-family: var(--font-body);
   font-size: 13px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--panel-shadow);
   z-index: 25;
-  min-width: 120px;
+  min-width: 140px;
   text-align: center;
 }
 .popup-title {
+  font-family: var(--font-heading);
   font-weight: bold;
   margin-bottom: 4px;
+  color: var(--accent-strong);
 }
 .popup-cost {
-  color: #ffd166;
+  color: var(--accent-strong);
   font-weight: bold;
   margin-bottom: 8px;
 }
 .popup-error {
-  color: #ff8080;
+  color: var(--text-negative);
   font-size: 12px;
   margin-bottom: 8px;
+}
+.popup-resources {
+  font-size: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.popup-resources.muted {
+  color: var(--text-muted, #999);
+}
+.popup-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-size: 12px;
+  margin-bottom: 8px;
+  text-align: center;
+  font-family: var(--font-body);
 }
 .popup-actions {
   display: flex;
@@ -662,15 +857,17 @@ watch(() => territoryStore.allTiles, draw, { deep: true })
   flex: 1;
   padding: 6px 8px;
   border-radius: 5px;
-  border: 1px solid #555;
-  background: #333;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   cursor: pointer;
   font-size: 12px;
+  font-family: var(--font-body);
 }
 .popup-btn.buy {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .popup-btn:disabled {
   opacity: 0.5;

@@ -7,6 +7,8 @@ Deliberately skips FastAPI's lifespan (no init_db()/clock_loop startup) — conf
 already calls init_db() once for the whole test session, and none of these tests
 depend on the real-time background clock tick."""
 
+from collections import deque
+
 import httpx
 import pytest
 
@@ -148,3 +150,73 @@ async def test_territory_purchase_via_http(client, session_id):
         f"/api/session/{session_id}/territory/purchase", json={"x": -1, "y": -1}
     )
     assert out_of_bounds.status_code == 400
+
+
+async def test_city_founding_via_http_logs_a_chronicle_entry(client, session_id):
+    await client.get(f"/api/session/{session_id}/nation")
+    await _give_treasury(session_id, 100_000)
+
+    map_data = (await client.get(f"/api/session/{session_id}/map")).json()
+    capital = map_data["capital"]
+    tiles_grid = map_data["tiles"]
+    height, width = len(tiles_grid), len(tiles_grid[0])
+    territory = (await client.get(f"/api/session/{session_id}/territory")).json()
+    owned_by_other = {(t["x"], t["y"]) for t in territory["all"] if t["owner"] != "player"}
+    owned_by_player = {(t["x"], t["y"]) for t in territory["tiles"]}
+
+    # The map is now randomized per game (varying terrain presets and capital
+    # position), so a fixed offset like "5 tiles east" can no longer be assumed to
+    # exist, be land, or be reachable by land. BFS over free non-water, non-rival
+    # tiles (8-directional, matching purchase_tile's adjacency rule) to a tile far
+    # enough from the capital to found a city on (MIN_DISTANCE_FROM_OTHER_CITIES == 3),
+    # then buy every not-yet-owned tile on that path in order (the path may pass
+    # through the capital's own starting 3x3 block, which is already owned).
+    start = (capital["x"], capital["y"])
+    visited = {start}
+    parent = {}
+    queue = deque([start])
+    target = None
+    while queue:
+        cx, cy = queue.popleft()
+        if (cx, cy) != start and max(abs(cx - start[0]), abs(cy - start[1])) >= 3:
+            target = (cx, cy)
+            break
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = cx + dx, cy + dy
+                if (
+                    0 <= nx < width
+                    and 0 <= ny < height
+                    and (nx, ny) not in visited
+                    and tiles_grid[ny][nx] != "water"
+                    and (nx, ny) not in owned_by_other
+                ):
+                    visited.add((nx, ny))
+                    parent[(nx, ny)] = (cx, cy)
+                    queue.append((nx, ny))
+    assert target is not None
+
+    path = []
+    node = target
+    while node != start:
+        path.append(node)
+        node = parent[node]
+    path.reverse()
+
+    for x, y in path:
+        if (x, y) in owned_by_player:
+            continue
+        resp = await client.post(f"/api/session/{session_id}/territory/purchase", json={"x": x, "y": y})
+        assert resp.status_code == 200
+        owned_by_player.add((x, y))
+
+    found = await client.post(
+        f"/api/session/{session_id}/cities", json={"x": target[0], "y": target[1], "name": "새도시"}
+    )
+    assert found.status_code == 200
+    assert found.json()["cities"][0]["name"] == "새도시"
+
+    log = await client.get(f"/api/session/{session_id}/log")
+    assert any("새도시" in e["message"] and e["category"] == "city" for e in log.json()["entries"])

@@ -23,7 +23,8 @@ const speeds = [
 </script>
 
 <template>
-  <div class="clock-panel">
+  <div class="clock-panel panel">
+    <div v-if="!clock.connected" class="reconnecting">● 재연결 중...</div>
     <div class="date-text">{{ dateText }}</div>
     <div class="speed-buttons">
       <button
@@ -40,16 +41,29 @@ const speeds = [
 
 <style scoped>
 .clock-panel {
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
   padding: 12px 16px;
-  border-radius: 8px;
-  font-family: sans-serif;
   text-align: right;
 }
+.reconnecting {
+  font-size: 11px;
+  color: var(--text-negative);
+  margin-bottom: 4px;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
 .date-text {
+  font-family: var(--font-heading);
   font-size: 18px;
-  font-weight: bold;
+  font-weight: 700;
+  color: var(--accent-strong);
   margin-bottom: 8px;
 }
 .speed-buttons {
@@ -60,15 +74,20 @@ const speeds = [
 button {
   padding: 4px 10px;
   border-radius: 4px;
-  border: 1px solid #888;
-  background: #333;
-  color: white;
+  border: 1px solid var(--panel-border-soft);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;
+  font-family: var(--font-body);
+}
+button:hover {
+  border-color: var(--accent);
 }
 button.active {
-  background: #4a90d9;
-  border-color: #4a90d9;
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 </style>

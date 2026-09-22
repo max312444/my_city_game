@@ -10,6 +10,7 @@ export const useMapStore = defineStore('map', {
     tiles: [],
     capital: null,
     rivalCapitals: [],
+    resources: [],
   }),
   actions: {
     async fetchMap() {
@@ -21,6 +22,10 @@ export const useMapStore = defineStore('map', {
       this.tiles = data.tiles
       this.capital = data.capital
       this.rivalCapitals = data.rival_capitals || []
+      this.resources = data.resources || []
+    },
+    resourcesNear(x, y, radius = 1) {
+      return this.resources.filter((r) => Math.max(Math.abs(r.x - x), Math.abs(r.y - y)) <= radius)
     },
   },
 })

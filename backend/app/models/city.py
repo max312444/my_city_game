@@ -5,9 +5,10 @@ from app.db import Base
 
 
 class City(Base):
-    """A player-founded city beyond the capital. Purely a map/flavor feature plus a
-    small nation-wide economic bonus — there is no per-city economy simulation, the
-    nation's stats stay a single aggregate (see nation_service)."""
+    """A founded city beyond the capital — the player's own or (autonomously) a
+    rival's. Purely a map/flavor feature plus a small nation-wide economic bonus for
+    the player — there is no per-city economy simulation, each nation's stats stay a
+    single aggregate (see nation_service)."""
 
     __tablename__ = "cities"
 
@@ -16,5 +17,6 @@ class City(Base):
     name: Mapped[str] = mapped_column(String)
     x: Mapped[int] = mapped_column(Integer)
     y: Mapped[int] = mapped_column(Integer)
+    owner: Mapped[str] = mapped_column(String, default="player", server_default="player")
     founded_year: Mapped[int] = mapped_column(Integer)
     founded_month: Mapped[int] = mapped_column(Integer)

@@ -90,6 +90,27 @@ async def test_advance_nation_leaves_land_capacity_alone_when_tile_count_omitted
     assert nation.land_capacity == nation_service.compute_land_capacity(40)  # unchanged
 
 
+async def test_advance_nation_applies_resource_bonus_on_top_of_base_delta(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    monkeypatch.setattr(nation_service.random, "uniform", lambda a, b: 0.0)  # pin the -4..6 roll to 0
+
+    baseline = await nation_service.advance_nation(session_id, {"year": 1, "month": 1})
+    boosted = await nation_service.advance_nation(
+        session_id, {"year": 1, "month": 2}, resource_bonus={"economy": 10.0, "military": 5.0}
+    )
+    assert boosted.economy > baseline.economy
+    assert boosted.military > baseline.military
+
+
+async def test_advance_nation_resource_food_bonus_raises_food_stock(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    plain = await nation_service.advance_nation(session_id, {"year": 1, "month": 1})
+    boosted = await nation_service.advance_nation(
+        session_id, {"year": 1, "month": 2}, resource_bonus={"food": 0.5}
+    )
+    assert boosted.food_stock > plain.food_stock
+
+
 async def test_sync_land_capacity_updates_immediately(session_id):
     await nation_service.get_or_create_nation(session_id)
     nation = await nation_service.sync_land_capacity(session_id, 100)
