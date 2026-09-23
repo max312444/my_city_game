@@ -840,6 +840,32 @@ class GameClock:
   추가해서 누르면 그래프 오버레이가 뜨는 구조. 빠르게 "지금 뭐 연구 중이지" 확인할 땐 기존 리스트,
   "다음에 뭘 노려야 하지" 계획 세울 땐 그래프 — 용도가 달라서 둘 다 남겨둠.
 
+## CI가 처음부터 계속 빨간불이었던 버그 발견 및 수정 (2026-09-23)
+
+사용자가 GitHub Actions 실패 이메일을 보내줘서 확인 — `gh` 인증이 안 돼 있어서 API를 인증 없이 직접
+불러(`curl https://api.github.com/repos/.../actions/runs`), 이 CI가 **워크플로우 추가 이후 단
+2번 돌았는데 2번 다 실패**했다는 걸 확인함(오늘 커밋뿐 아니라 어제 커밋도). 즉 오늘 추가한 기능
+때문이 아니라 애초에 CI 설정 자체가 처음부터 깨져 있었던 것.
+
+- **원인**: `pytest.ini`에 `pythonpath` 설정이 없었음 — 로컬에서는 항상
+  `./venv/Scripts/python.exe -m pytest`로 돌렸는데(`-m` 플래그가 현재 디렉터리를 sys.path에 자동
+  추가함), CI 워크플로우는 `pytest -v`를 바로 실행(설치된 콘솔 스크립트 진입점 — 이 경우 CWD가
+  sys.path에 안 들어감). `backend/tests/`에 `__init__.py`가 없어서 pytest가 `app` 패키지를 찾을
+  경로를 전혀 몰랐고, `conftest.py`의 `from app.db import ...`가
+  `ModuleNotFoundError: No module named 'app'`로 실패 → pytest가 **exit code 4(usage error)**로
+  종료(conftest 임포트 실패는 일반 테스트 실패가 아니라 pytest 자체의 "사용법 오류"로 취급됨).
+  로컬에서 매번 `python -m pytest`로만 돌렸기 때문에 이 문제를 한 번도 마주치지 못했던 것.
+- **재현 방법**: `gh` 인증이 없어 실제 로그를 못 봐서, Docker로 CI와 최대한 똑같은 환경(Ubuntu 계열
+  `python:3.12-slim` 공식 이미지, `pip install -r requirements.txt` → `pytest -v`, CI 워크플로우와
+  정확히 같은 순서)을 직접 재현해서 똑같은 에러를 그대로 재현함 — 이후 수정하고 같은 컨테이너에서
+  159개 전부 통과하는 것까지 확인.
+- **수정**: `pytest.ini`에 `pythonpath = .` 한 줄 추가 — pytest 7+ 공식 옵션으로, `pytest`를 어떤
+  방식으로 실행하든(`-m` 플래그 여부와 무관하게) 항상 현재 디렉터리를 sys.path에 넣어줌. 워크플로우
+  파일 자체는 건드릴 필요 없었음.
+- **교훈**: 로컬 테스트 습관(`python -m pytest`)이 실제 CI 실행 방식(`pytest`)과 다르면 이런 격차가
+  생길 수 있음 — 앞으로 CI 워크플로우를 바꾸거나 새 프로젝트에 pytest를 셋업할 때는 로컬에서도 최소
+  한 번은 CI와 똑같은 커맨드(`pytest`, `python -m pytest` 아님)로 검증해볼 것.
+
 ## 작업 방식
 
 - 한 단계 끝날 때마다 실제로 서버 띄우고 브라우저에서 확인한 다음 다음 단계로 넘어간다.
