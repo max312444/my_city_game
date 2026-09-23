@@ -7,9 +7,22 @@ async def test_new_nation_defaults_and_naming(session_id):
     # A freshly created nation's name defaults to the session id — the frontend
     # uses this exact fact to detect "hasn't chosen a city name yet".
     assert nation.name == session_id
+    assert nation.difficulty == "normal"
 
     renamed = await nation_service.set_nation_name(session_id, "테스트왕국")
     assert renamed.name == "테스트왕국"
+
+
+async def test_set_nation_name_applies_a_valid_difficulty_choice(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    updated = await nation_service.set_nation_name(session_id, "테스트왕국", "hell")
+    assert updated.difficulty == "hell"
+
+
+async def test_set_nation_name_ignores_an_invalid_difficulty(session_id):
+    await nation_service.get_or_create_nation(session_id)
+    updated = await nation_service.set_nation_name(session_id, "테스트왕국", "not_a_real_difficulty")
+    assert updated.difficulty == "normal"
 
 
 async def test_nation_exists_and_delete(session_id):
@@ -84,6 +97,21 @@ def test_compute_era_reflects_tech_tree_progress():
     assert compute_era(15) == "medieval"
     assert compute_era(19) == "medieval"
     assert compute_era(20) == "renaissance"
+    assert compute_era(23) == "renaissance"
+    assert compute_era(24) == "enlightenment"
+    assert compute_era(27) == "enlightenment"
+    assert compute_era(28) == "industrial"
+
+
+def test_population_factor_is_capped_so_it_cannot_snowball_forever():
+    from app.models.nation import POPULATION_FACTOR_CAP, population_factor
+
+    # Found via an 11-in-game-year playtest: population reaching the tens of
+    # thousands turned population_factor into a 30x+ multiplier on top of already
+    # fast economy/military growth. It must now plateau at the cap.
+    assert population_factor(1_000_000) == POPULATION_FACTOR_CAP
+    assert population_factor(50) == 1.0  # unchanged at the starting population
+    assert population_factor(50 * POPULATION_FACTOR_CAP**2) == POPULATION_FACTOR_CAP  # right at the cap
 
 
 def test_compute_land_capacity_scales_with_tiles_and_has_a_floor():

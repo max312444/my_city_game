@@ -1,31 +1,47 @@
 <script setup>
 import { ref } from 'vue'
-import TechPanel from './TechPanel.vue'
-import DiplomacyPanel from './DiplomacyPanel.vue'
 import BuildingPanel from './BuildingPanel.vue'
 import WonderPanel from './WonderPanel.vue'
 import TradePanel from './TradePanel.vue'
 
-const open = ref(false)
+// One shared sliding panel, three independent tabs — clicking a tab shows its
+// content and slides the panel out; clicking the already-open tab collapses it.
+// Only ever one tab open at a time (activeTab is a single ref), so the panel
+// never has two tabs' content trying to occupy the same 252px column at once.
+const TABS = [
+  { id: 'building', label: '건물', topPercent: 32 },
+  { id: 'wonder', label: '유산', topPercent: 52 },
+  { id: 'trade', label: '교역', topPercent: 72 },
+]
+
+const activeTab = ref(null) // null | 'building' | 'wonder' | 'trade'
+
+function toggle(id) {
+  activeTab.value = activeTab.value === id ? null : id
+}
 </script>
 
 <template>
-  <button class="drawer-tab" :class="{ open }" @click="open = !open">
-    {{ open ? '◀' : '▶' }} 테크 · 건물 · 유산 · 외교 · 교역
+  <button
+    v-for="tab in TABS"
+    :key="tab.id"
+    class="drawer-tab"
+    :class="{ open: activeTab === tab.id }"
+    :style="{ top: tab.topPercent + '%' }"
+    @click="toggle(tab.id)"
+  >
+    {{ activeTab === tab.id ? '◀' : '▶' }} {{ tab.label }}
   </button>
-  <div class="drawer-panel" :class="{ open }">
-    <TechPanel />
-    <BuildingPanel />
-    <WonderPanel />
-    <DiplomacyPanel />
-    <TradePanel />
+  <div class="drawer-panel" :class="{ open: !!activeTab }">
+    <BuildingPanel v-if="activeTab === 'building'" />
+    <WonderPanel v-if="activeTab === 'wonder'" />
+    <TradePanel v-if="activeTab === 'trade'" />
   </div>
 </template>
 
 <style scoped>
 .drawer-tab {
   position: fixed;
-  top: 50%;
   left: 0;
   transform: translateY(-50%);
   writing-mode: vertical-rl;

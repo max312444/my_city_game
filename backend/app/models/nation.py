@@ -4,6 +4,7 @@ import random
 from sqlalchemy import Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.data.difficulty import DEFAULT_DIFFICULTY
 from app.data.national_traits import NATIONAL_TRAIT_IDS
 from app.db import Base
 
@@ -27,12 +28,23 @@ def compute_land_capacity(owned_tile_count: int) -> int:
 
 FOOD_PER_CAPITA_PRODUCTION = 0.7
 FOOD_PER_CAPITA_CONSUMPTION = 0.6
-FOOD_GROWTH_SENSITIVITY = 0.3
+# Lowered from 0.3 after a playtest showed population compounding to ~1000x (50 ->
+# 49,000) within 11 in-game years, which then snowballed economy/military via
+# population_factor below — the whole nation was maxing out its stats far too fast
+# for a game meant to be watched over a long time.
+FOOD_GROWTH_SENSITIVITY = 0.18
+
+# Bigger population still boosts economic/military output, but the multiplier itself
+# is now capped — without this, a population big enough (tens of thousands, which the
+# same playtest reached easily) turned into an unbounded amplifier on top of already
+# fast stat growth. 6x (reached around population 1800) still meaningfully rewards
+# growing your population, it just can't compound forever.
+POPULATION_FACTOR_CAP = 6.0
 
 
 def population_factor(population: float) -> float:
     """Bigger population boosts economic/military output. 1.0x at the starting population."""
-    return math.sqrt(max(population, 1.0) / INITIAL_POPULATION)
+    return min(POPULATION_FACTOR_CAP, math.sqrt(max(population, 1.0) / INITIAL_POPULATION))
 
 
 def satisfaction_fraction(stability: float) -> float:
@@ -51,13 +63,15 @@ def _random_trait() -> str:
 # Era is derived from how many techs have been researched, not stored directly — it's
 # purely a display/visual concept (city art style, era label), never a stat multiplier,
 # so it never needs a migration when the tech tree grows. Named after how far through
-# the 20-node tech tree the nation has gotten (6/3/6/5 techs per tier) instead of just
-# 3 flat buckets, so the name actually keeps changing as the nation develops.
+# the (now 28-node) tech tree the nation has gotten, tier by tier, instead of just a
+# few flat buckets, so the name actually keeps changing as the nation develops.
 ERA_THRESHOLDS = [
-    (20, "renaissance"),  # all of tier 4 (university/banking/steel_weapons/printing_press/gunpowder)
-    (15, "medieval"),  # all of tier 3 (philosophy..cavalry_tactics)
-    (9, "classical"),  # all of tier 2 (currency/horseback_riding/astronomy)
-    (6, "iron"),  # all 6 original tier-1 techs
+    (28, "industrial"),  # tier 7 (industrialization)
+    (24, "enlightenment"),  # all of tier 6 (steam_engine/rifling/public_education)
+    (20, "renaissance"),  # all of tier 5 (chemistry/economics/military_academy/civil_engineering)
+    (15, "medieval"),  # all of tier 4 (university/banking/steel_weapons/printing_press/gunpowder)
+    (9, "classical"),  # all of tier 3 (philosophy..cavalry_tactics)
+    (6, "iron"),  # all of tier 2 (currency/horseback_riding/astronomy)... plus the 6 original tier-1 techs
     (1, "bronze"),  # at least one tech researched
 ]
 
@@ -96,6 +110,7 @@ class Nation(Base):
     current_building_months_left: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     current_wonder: Mapped[str] = mapped_column(String, default="", server_default="")
     current_wonder_months_left: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    difficulty: Mapped[str] = mapped_column(String, default=DEFAULT_DIFFICULTY, server_default=DEFAULT_DIFFICULTY)
 
     def to_dict(self):
         pop_factor = population_factor(self.population)
@@ -130,4 +145,5 @@ class Nation(Base):
             "is_famine": self.food_stock < 0,
             "national_trait": self.national_trait,
             "era": compute_era(researched_count),
+            "difficulty": self.difficulty,
         }

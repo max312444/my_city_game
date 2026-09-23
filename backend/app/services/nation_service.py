@@ -3,6 +3,7 @@ import random
 
 from sqlalchemy import select
 
+from app.data.difficulty import DIFFICULTY_IDS
 from app.data.national_traits import NATIONAL_TRAITS
 from app.db import async_session_maker
 from app.models.nation import (
@@ -53,10 +54,15 @@ async def get_or_create_nation(session_id: str) -> Nation:
         return nation
 
 
-async def set_nation_name(session_id: str, name: str) -> Nation:
+async def set_nation_name(session_id: str, name: str, difficulty: str | None = None) -> Nation:
     async with async_session_maker() as db:
         nation = await _get_or_create_nation(db, session_id)
         nation.name = name
+        # difficulty is chosen alongside the name on a nation's very first naming
+        # screen (see NationNamePrompt.vue) — invalid/omitted values just leave
+        # whatever the nation already had (the model default) untouched.
+        if difficulty in DIFFICULTY_IDS:
+            nation.difficulty = difficulty
         await db.commit()
         await db.refresh(nation)
         return nation
@@ -97,7 +103,10 @@ async def advance_nation(
         trait_growth = NATIONAL_TRAITS.get(nation.national_trait, {}).get("growth", {})
         for stat in STATS:
             value = getattr(nation, stat)
-            delta = random.uniform(-4, 6) + resource_bonus.get(stat, 0.0)
+            # Narrowed from (-4, 6) after a playtest showed the nation maxing out its
+            # stats far too quickly on its own, even before population_factor's snowball —
+            # base growth should be modest so tech/advice/resources feel like they matter.
+            delta = random.uniform(-3, 4) + resource_bonus.get(stat, 0.0)
             if stat in ("economy", "military") and delta > 0:
                 delta *= pop_factor
             if delta > 0:

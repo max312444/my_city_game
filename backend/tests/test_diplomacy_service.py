@@ -1,6 +1,7 @@
 import pytest
 
 from app.db import async_session_maker
+from app.models.territory import OwnedTile
 from app.services import diplomacy_service, nation_service
 
 
@@ -327,6 +328,92 @@ async def test_mutual_defense_pulls_an_ally_into_the_players_war(session_id, mon
     northern = next(r for r in rivals if r["rival_id"] == "northern_kingdom")
     assert northern["relationship"] == "war"
     assert any("동맹국을 지키기 위해 참전" in r for r in reports)
+
+
+def test_rival_growth_factor_scales_with_tile_count_and_caps():
+    assert diplomacy_service.rival_growth_factor(diplomacy_service.RIVAL_STARTING_TILE_COUNT) == 1.0
+    assert diplomacy_service.rival_growth_factor(0) == diplomacy_service.rival_growth_factor(1)  # floored at 1 tile
+    big = diplomacy_service.rival_growth_factor(diplomacy_service.RIVAL_STARTING_TILE_COUNT * 10_000)
+    assert big == diplomacy_service.RIVAL_GROWTH_FACTOR_CAP
+
+
+async def test_rival_with_more_territory_grows_economy_faster_than_a_small_rival(session_id, monkeypatch):
+    # The player's economy/military growth scales with population_factor (itself driven
+    # by owned tiles); rivals had no equivalent, letting the player structurally
+    # out-grow every rival regardless of territory. eastern_tribes gets a big block of
+    # extra tiles, northern_kingdom stays at its starting size — only that should decide
+    # who grows economy faster given the same pinned base roll.
+    await nation_service.get_or_create_nation(session_id)
+    await diplomacy_service.get_rivals(session_id)
+    monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: 4.0)  # pin the base roll positive
+    monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.99)  # never trigger any war/aggression roll
+
+    async with async_session_maker() as db:
+        rivals = await diplomacy_service._get_rivals(db, session_id)
+        for r in rivals:
+            r.economy = 100.0
+            r.national_trait = "military"  # same trait for both, so it can't explain the difference
+        for i in range(50):
+            db.add(OwnedTile(session_id=session_id, x=100 + i, y=100, owner="eastern_tribes"))
+        await db.commit()
+
+    _, rivals, _, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+    eastern = next(r for r in rivals if r["rival_id"] == "eastern_tribes")  # 50 tiles
+    northern = next(r for r in rivals if r["rival_id"] == "northern_kingdom")  # still 0 tracked tiles
+    assert eastern["economy"] > northern["economy"]
+
+
+async def test_difficulty_scales_rival_economy_growth(session_id, monkeypatch):
+    await nation_service.get_or_create_nation(session_id)
+    await diplomacy_service.get_rivals(session_id)
+    monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: 4.0)  # pin the base roll positive
+    monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.99)  # never trigger any war/aggression roll
+
+    async def _run(difficulty):
+        async with async_session_maker() as db:
+            nation = await nation_service._get_or_create_nation(db, session_id)
+            nation.difficulty = difficulty
+            rivals = await diplomacy_service._get_rivals(db, session_id)
+            for r in rivals:
+                r.economy = 100.0
+            await db.commit()
+        _, rivals, _, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+        return next(r for r in rivals if r["rival_id"] == "eastern_tribes")["economy"]
+
+    hell_economy = await _run("hell")
+    easy_economy = await _run("easy")
+    assert hell_economy > easy_economy
+
+
+async def test_hell_difficulty_makes_a_rival_strike_first_when_easy_would_not(session_id, monkeypatch):
+    # Same military ratio (1.0x, base chance 0.01) for every rival — a roll of 0.015
+    # only clears hell's boosted chance (0.01 * 2.2 = 0.022), not easy's (0.01 * 0.5 = 0.005).
+    await nation_service.get_or_create_nation(session_id)
+    await diplomacy_service.get_rivals(session_id)
+    await _set_military(session_id, 10.0)
+    async with async_session_maker() as db:
+        rivals = await diplomacy_service._get_rivals(db, session_id)
+        for r in rivals:
+            r.military = 10.0
+            r.personality = "neutral"  # not a real personality -> _trait() falls back to 1.0x
+        await db.commit()
+
+    monkeypatch.setattr(diplomacy_service.random, "random", lambda: 0.015)
+    monkeypatch.setattr(diplomacy_service.random, "uniform", lambda a, b: a)  # pin stat drift
+
+    async def _run(difficulty):
+        async with async_session_maker() as db:
+            nation = await nation_service._get_or_create_nation(db, session_id)
+            nation.difficulty = difficulty
+            rivals = await diplomacy_service._get_rivals(db, session_id)
+            for r in rivals:
+                r.relationship = "peace"
+            await db.commit()
+        _, rivals, _, _, _ = await diplomacy_service.advance_rivals(session_id, {"year": 1, "month": 2})
+        return next(r for r in rivals if r["rival_id"] == "eastern_tribes")["relationship"]
+
+    assert await _run("hell") == "war"
+    assert await _run("easy") == "peace"
 
 
 async def test_mutual_defense_never_triggers_without_an_allied_war(session_id, monkeypatch):

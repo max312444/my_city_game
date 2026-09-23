@@ -114,6 +114,7 @@ class LoginRequest(BaseModel):
 
 class NationNameRequest(BaseModel):
     name: str
+    difficulty: str | None = None
 
 
 class TerritoryPurchaseRequest(BaseModel):
@@ -211,7 +212,7 @@ async def set_nation_name_endpoint(session_id: str, body: NationNameRequest):
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="이름을 입력해주세요")
-    nation = await set_nation_name(session_id, name)
+    nation = await set_nation_name(session_id, name, body.difficulty)
     session = await session_manager.get_or_create(session_id)
     await session.broadcast("nation_updated", {"nation": nation.to_dict()})
     return nation.to_dict()

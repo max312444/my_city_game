@@ -350,6 +350,8 @@ const ERA_ROOF_COLORS = {
   classical: ROOF_COLORS,
   medieval: ['rgba(58,78,108,0.95)', 'rgba(70,68,88,0.95)', 'rgba(64,90,96,0.95)'],
   renaissance: ['rgba(110,70,120,0.95)', 'rgba(150,120,50,0.95)'],
+  enlightenment: ['rgba(90,60,140,0.95)', 'rgba(60,100,140,0.95)'],
+  industrial: ['rgba(70,70,74,0.95)', 'rgba(90,60,40,0.95)'],
 }
 const ERA_ICON = {
   primitive: '🔥',
@@ -358,6 +360,8 @@ const ERA_ICON = {
   classical: '🏛️',
   medieval: '🏰',
   renaissance: '🎨',
+  enlightenment: '💡',
+  industrial: '⚙️',
 }
 
 function drawCity(ctx, cx, cy, tileSize, tier, color, name, isPlayer, seed, era = null) {

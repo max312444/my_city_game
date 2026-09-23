@@ -22,12 +22,20 @@ const ERA_META = {
   classical: { icon: '🏛️', label: '고전시대' },
   medieval: { icon: '🏰', label: '중세시대' },
   renaissance: { icon: '🎨', label: '르네상스시대' },
+  enlightenment: { icon: '💡', label: '계몽시대' },
+  industrial: { icon: '⚙️', label: '산업시대' },
 }
 const TRAIT_META = {
   military: { icon: '⚔️', label: '군사 특화' },
   economic: { icon: '💰', label: '경제 특화' },
   production: { icon: '🏭', label: '생산 특화' },
   scholarly: { icon: '📚', label: '학문 특화' },
+}
+const DIFFICULTY_META = {
+  easy: { icon: '🌱', label: '이지' },
+  normal: { icon: '⚖️', label: '노말' },
+  hard: { icon: '🔥', label: '하드' },
+  hell: { icon: '💀', label: '헬' },
 }
 </script>
 
@@ -45,6 +53,14 @@ const TRAIT_META = {
       >
         {{ TRAIT_META[nationStore.nation.national_trait].icon }}
         {{ TRAIT_META[nationStore.nation.national_trait].label }}
+      </span>
+      <span
+        v-if="DIFFICULTY_META[nationStore.nation.difficulty]"
+        class="badge-pill"
+        :title="'난이도: ' + DIFFICULTY_META[nationStore.nation.difficulty].label"
+      >
+        {{ DIFFICULTY_META[nationStore.nation.difficulty].icon }}
+        {{ DIFFICULTY_META[nationStore.nation.difficulty].label }}
       </span>
       <span class="chevron">{{ open ? '▲' : '▼' }}</span>
     </button>

@@ -4,6 +4,7 @@ from typing import Dict, Literal
 from fastapi import WebSocket
 
 from app.core.game_clock import GameClock
+from app.data.difficulty import difficulty_multiplier
 from app.data.rivals import PERSONALITY_TRAITS
 from app.services import city_service, map_service, territory_service
 from app.services.map_service import RESOURCE_TYPES
@@ -75,6 +76,7 @@ async def _resolve_territory_changes(
     current_date: dict,
     player_economy: float = 0.0,
     siege_targets: dict[str, tuple[int, int]] | None = None,
+    difficulty: str = "normal",
 ):
     """Turns this month's rival economies + war results (player-vs-rival AND, now,
     rival-vs-rival) into actual tile ownership (and city) changes. Lives here (not in
@@ -108,10 +110,14 @@ async def _resolve_territory_changes(
         if claimed is not None:
             territory_changed = True
 
+    difficulty_expansion_mult = difficulty_multiplier(difficulty, "expansion")
     for rival in rivals:
-        expansion_mult = _trait(rival.get("personality"), "expansion_multiplier")
+        if rival.get("relationship") == "defeated":
+            continue  # a fallen nation doesn't get to keep growing its (nonexistent) land
+        expansion_mult = _trait(rival.get("personality"), "expansion_multiplier") * difficulty_expansion_mult
         chance = min(
-            RIVAL_EXPANSION_CHANCE_CAP, rival["economy"] / RIVAL_EXPANSION_CHANCE_DIVISOR * expansion_mult
+            RIVAL_EXPANSION_CHANCE_CAP * difficulty_expansion_mult,
+            rival["economy"] / RIVAL_EXPANSION_CHANCE_DIVISOR * expansion_mult,
         )
         if random.random() < chance:
             claimed = await territory_service.expand_rival_territory(
@@ -350,7 +356,14 @@ class Session:
         world_news, world_war_outcomes = await advance_world(self.session_id)
 
         extra_reports, territory_changed, cities_changed = await _resolve_territory_changes(
-            self.session_id, rivals, war_outcomes, world_war_outcomes, current_date, nation.economy, self.siege_targets
+            self.session_id,
+            rivals,
+            war_outcomes,
+            world_war_outcomes,
+            current_date,
+            nation.economy,
+            self.siege_targets,
+            nation.difficulty,
         )
         all_war_reports = war_reports + extra_reports
 

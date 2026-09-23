@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import ClockPanel from './components/ClockPanel.vue'
 import TopHud from './components/TopHud.vue'
 import GameMenu from './components/GameMenu.vue'
@@ -12,6 +12,9 @@ import LeftDrawer from './components/LeftDrawer.vue'
 import MapCanvas from './components/MapCanvas.vue'
 import PeaceOfferPopup from './components/PeaceOfferPopup.vue'
 import VictoryScreen from './components/VictoryScreen.vue'
+import Guidebook from './components/Guidebook.vue'
+import TechTreeButton from './components/TechTreeButton.vue'
+import DiplomacyDrawer from './components/DiplomacyDrawer.vue'
 import { useSessionStore } from './stores/session'
 import { useNationStore } from './stores/nation'
 import { useDiplomacyStore } from './stores/diplomacy'
@@ -21,11 +24,22 @@ const nationStore = useNationStore()
 const diplomacyStore = useDiplomacyStore()
 
 const nationLoaded = ref(false)
+const guidebookRef = ref(null)
 
 async function loadNation() {
   nationLoaded.value = false
   await nationStore.fetchInitial()
   nationLoaded.value = true
+}
+
+async function onNationNamed() {
+  nationLoaded.value = true
+  // <Guidebook> only exists once nationLoaded flips the v-else-if branch, so its ref
+  // isn't mounted yet in this same synchronous tick — wait for the DOM update first.
+  await nextTick()
+  // Only ever fires right after a brand-new game's naming prompt — "이어하기" skips
+  // straight past it, so returning players never get this popped on them again.
+  if (guidebookRef.value) guidebookRef.value.open = true
 }
 
 watch(
@@ -48,15 +62,18 @@ const gameWon = computed(
 <template>
   <div class="app">
     <LoginScreen v-if="!sessionStore.sessionId" />
-    <NationNamePrompt v-else-if="needsName" @named="nationLoaded = true" />
+    <NationNamePrompt v-else-if="needsName" @named="onNationNamed" />
     <template v-else-if="nationLoaded">
       <MapCanvas />
       <TopHud />
       <div class="right-column">
         <ClockPanel />
         <GameMenu />
+        <Guidebook ref="guidebookRef" />
       </div>
+      <TechTreeButton />
       <LeftDrawer />
+      <DiplomacyDrawer />
       <AdviceBanner />
       <EventToast />
       <GreatPersonToast />

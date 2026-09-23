@@ -1,17 +1,36 @@
 import itertools
+import math
 import random
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from app.data.difficulty import difficulty_multiplier
 from app.data.national_traits import NATIONAL_TRAITS
 from app.data.rivals import PERSONALITY_TRAITS, RIVAL_TEMPLATES
 from app.db import async_session_maker
 from app.models.rival_nation import RivalNation
 from app.models.rival_relationship import RivalRelationship
+# A raw model import, not app.services.territory_service — territory_service and
+# this module must stay mutually independent (see advance_rivals's docstring), so
+# reading tile counts goes straight to the table instead of through that service.
+from app.models.territory import OwnedTile
 from app.services.nation_service import STAT_MAX, _apply_delta, _get_or_create_nation
 
 RIVAL_EXPANSION_CHANCE_DIVISOR = 400.0
 RIVAL_EXPANSION_CHANCE_CAP = 0.25
+
+# The player's economy/military growth is scaled up by population_factor, which is
+# itself driven by how much land they own (population_factor.py). Rivals had no
+# equivalent — a rival sitting on 9 tiles grew its stats exactly as fast as one
+# sitting on 80, which is the main reason the player's nation always ended up
+# pulling ahead. This mirrors population_factor's shape using tile count directly
+# (rivals don't track population), with the same "starting size = 1.0x" anchor.
+RIVAL_STARTING_TILE_COUNT = 9  # matches ensure_rival_territory's 3x3 starting block
+RIVAL_GROWTH_FACTOR_CAP = 6.0
+
+
+def rival_growth_factor(tile_count: int) -> float:
+    return min(RIVAL_GROWTH_FACTOR_CAP, math.sqrt(max(tile_count, 1) / RIVAL_STARTING_TILE_COUNT))
 
 WAR_DECLARATION_STABILITY_PENALTY = -0.05
 WAR_UPKEEP_BASE = 10.0
@@ -153,16 +172,31 @@ async def advance_rivals(session_id: str, current_date: dict):
                 allies_of.setdefault(row.rival_b, set()).add(row.rival_a)
         already_at_war_with_player = {r.rival_id for r in rivals if r.relationship == "war"}
 
+        tile_counts = dict(
+            (
+                await db.execute(
+                    select(OwnedTile.owner, func.count(OwnedTile.id))
+                    .where(OwnedTile.session_id == session_id, OwnedTile.owner != "player")
+                    .group_by(OwnedTile.owner)
+                )
+            ).all()
+        )
+        growth_mult = difficulty_multiplier(nation.difficulty, "rival_growth")
+
         for rival in rivals:
             if rival.relationship == "defeated":
                 continue  # a fallen nation is out of the game — its stats stay frozen
 
+            territory_factor = rival_growth_factor(tile_counts.get(rival.rival_id, RIVAL_STARTING_TILE_COUNT))
             trait_growth = NATIONAL_TRAITS.get(rival.national_trait, {}).get("growth", {})
             for stat in ("economy", "stability", "military"):
                 value = getattr(rival, stat)
-                delta = random.uniform(-4, 6)
+                # Narrowed from (-4, 6), same pacing fix as the player's advance_nation.
+                delta = random.uniform(-3, 4)
+                if stat in ("economy", "military") and delta > 0:
+                    delta *= territory_factor
                 if delta > 0:
-                    delta *= trait_growth.get(stat, 1.0)
+                    delta *= trait_growth.get(stat, 1.0) * growth_mult
                 setattr(rival, stat, max(0.0, min(STAT_MAX, value + delta)))
 
             if rival.relationship == "war":
@@ -225,10 +259,15 @@ async def advance_rivals(session_id: str, current_date: dict):
                 # At peace: a rival currently stronger than the player has a small,
                 # capped chance of striking first — the player is never truly safe from
                 # war, but it stays a rare event, not something to brace for every month.
+                # Difficulty scales both the roll and its cap the same way, so "hell"
+                # rivals genuinely strike more often instead of just hitting the same
+                # ceiling faster.
+                aggression_mult = difficulty_multiplier(nation.difficulty, "aggression")
                 aggression_chance = min(
-                    RIVAL_AGGRESSION_CHANCE_CAP,
+                    RIVAL_AGGRESSION_CHANCE_CAP * aggression_mult,
                     RIVAL_AGGRESSION_CHANCE_BASE
                     * _trait(rival.personality, "aggression_multiplier")
+                    * aggression_mult
                     * (rival.military / max(nation.military, 1.0)),
                 )
                 if random.random() < aggression_chance:

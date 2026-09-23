@@ -39,6 +39,25 @@ async def test_resolve_territory_changes_no_war_no_capture(session_id):
     assert cities_changed is False  # no rival owns anywhere near enough tiles yet
 
 
+async def test_resolve_territory_changes_never_expands_a_defeated_rival(session_id, monkeypatch):
+    # Regression test found via playtest: a defeated rival must never gain tiles from
+    # the same organic-expansion roll active rivals get.
+    await nation_service.get_or_create_nation(session_id)
+    map_data = await map_service.get_or_create_map(session_id)
+    rival_id = map_data["rival_capitals"][0]["rival_id"]
+    before = await territory_service.get_owned_tiles(session_id, owner=rival_id)
+
+    monkeypatch.setattr(session_manager.random, "random", lambda: 0.0)  # would clear any positive chance
+    rivals = [{"rival_id": rival_id, "economy": 999.0, "relationship": "defeated", "personality": "economic"}]
+
+    _, changed, _ = await session_manager._resolve_territory_changes(
+        session_id, rivals, [], [], {"year": 1, "month": 1}
+    )
+    assert changed is False
+    after = await territory_service.get_owned_tiles(session_id, owner=rival_id)
+    assert len(after) == len(before)
+
+
 async def test_resolve_territory_changes_auto_expands_player_territory(session_id, monkeypatch):
     await nation_service.get_or_create_nation(session_id)
     await map_service.get_or_create_map(session_id)
@@ -67,6 +86,32 @@ async def test_resolve_territory_changes_player_never_auto_expands_at_zero_econo
     assert changed is False
     after = await territory_service.get_owned_tiles(session_id)
     assert len(after) == len(before)
+
+
+async def test_resolve_territory_changes_hell_difficulty_expands_rivals_more_than_easy(session_id, monkeypatch):
+    # economy=100, "economic" personality (1.5x expansion_multiplier): plain chance is
+    # 100/400*1.5 = 0.375. easy (x0.7) caps it at 0.175; hell (x1.6) caps it at 0.4. A
+    # roll of 0.3 clears hell's cap but not easy's — difficulty alone decides.
+    await nation_service.get_or_create_nation(session_id)
+    map_data = await map_service.get_or_create_map(session_id)
+    rival_id = map_data["rival_capitals"][0]["rival_id"]
+    monkeypatch.setattr(session_manager.random, "random", lambda: 0.3)
+    rivals = [{"rival_id": rival_id, "economy": 100.0, "relationship": "peace", "personality": "economic"}]
+
+    before = await territory_service.get_owned_tiles(session_id, owner=rival_id)
+    _, changed_easy, _ = await session_manager._resolve_territory_changes(
+        session_id, rivals, [], [], {"year": 1, "month": 1}, difficulty="easy"
+    )
+    assert changed_easy is False
+    after_easy = await territory_service.get_owned_tiles(session_id, owner=rival_id)
+    assert len(after_easy) == len(before)
+
+    _, changed_hell, _ = await session_manager._resolve_territory_changes(
+        session_id, rivals, [], [], {"year": 1, "month": 2}, difficulty="hell"
+    )
+    assert changed_hell is True
+    after_hell = await territory_service.get_owned_tiles(session_id, owner=rival_id)
+    assert len(after_hell) == len(before) + 1
 
 
 async def test_resolve_territory_changes_reports_and_broadcasts_capture(session_id):

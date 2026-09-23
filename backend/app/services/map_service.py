@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.db import async_session_maker
 from app.models.game_map import GameMap
+from app.models.rival_nation import RivalNation
 from app.data.rivals import RIVAL_TEMPLATES
 from app.services.territory_service import ensure_initial_territory, ensure_rival_territory
 
@@ -65,7 +66,15 @@ RESOURCE_TYPES = {
     "horses": {"name": "말", "icon": "🐎", "terrain": ["grass"], "bonus": {"military": 5.0}},
     "fish": {"name": "어장", "icon": "🐟", "terrain": ["water"], "bonus": {"food": 0.2}},
 }
-RESOURCE_CHANCE_PER_TILE = 0.05
+
+# Resources now spawn in small clusters (Civ-style "here's a nice spot") instead of
+# each tile independently rolling its own chance — a lone isolated gold_mine tile
+# doesn't read as a meaningful location the way 2-3 resources sitting near each other
+# does (worth planning a city around).
+RESOURCE_CLUSTER_COUNT = 7
+RESOURCE_CLUSTER_MIN_SIZE = 2
+RESOURCE_CLUSTER_MAX_SIZE = 3
+RESOURCE_CLUSTER_SEARCH_RADIUS = 2
 
 # The capital's position is now randomized per game (previously always dead-center),
 # but kept within a central band so it never lands close enough to a rival capital's
@@ -128,15 +137,28 @@ def _place_resources(grid, width, height, protected_tiles):
         for terrain in info["terrain"]:
             by_terrain.setdefault(terrain, []).append(res_id)
 
+    used_tiles = set(protected_tiles)
     resources = []
-    for y in range(height):
-        for x in range(width):
-            if (x, y) in protected_tiles:
-                continue
-            candidates = by_terrain.get(grid[y][x])
-            if not candidates or random.random() >= RESOURCE_CHANCE_PER_TILE:
-                continue
-            resources.append({"x": x, "y": y, "type": random.choice(candidates)})
+
+    for _ in range(RESOURCE_CLUSTER_COUNT):
+        cx, cy = random.randint(0, width - 1), random.randint(0, height - 1)
+        target_size = random.randint(RESOURCE_CLUSTER_MIN_SIZE, RESOURCE_CLUSTER_MAX_SIZE)
+
+        candidates = []
+        r = RESOURCE_CLUSTER_SEARCH_RADIUS
+        for dx in range(-r, r + 1):
+            for dy in range(-r, r + 1):
+                x, y = cx + dx, cy + dy
+                if not (0 <= x < width and 0 <= y < height) or (x, y) in used_tiles:
+                    continue
+                if by_terrain.get(grid[y][x]):
+                    candidates.append((x, y))
+        random.shuffle(candidates)
+
+        for x, y in candidates[:target_size]:
+            resources.append({"x": x, "y": y, "type": random.choice(by_terrain[grid[y][x]])})
+            used_tiles.add((x, y))
+
     return resources
 
 
@@ -195,6 +217,21 @@ async def get_or_create_map(session_id: str) -> dict:
             data = json.loads(game_map.data)
 
     await ensure_initial_territory(session_id, data["capital"]["x"], data["capital"]["y"])
+
+    # ensure_rival_territory only checks "does this rival currently own zero tiles" to
+    # decide whether to seed a starting block — that's indistinguishable from "already
+    # eliminated" (capture_tile takes a defeated rival all the way down to 0 tiles).
+    # Without this guard, a defeated rival gets a fresh 3x3 block re-seeded the very
+    # next time the map is fetched (which is every month) — an accidental resurrection.
+    # This reads the raw RivalNation table directly rather than importing
+    # diplomacy_service, to keep map_service independent of it (see diplomacy_service's
+    # module docstring for why that independence matters).
+    async with async_session_maker() as db:
+        result = await db.execute(select(RivalNation).where(RivalNation.session_id == session_id))
+        defeated_ids = {r.rival_id for r in result.scalars().all() if r.relationship == "defeated"}
+
     for rc in data["rival_capitals"]:
+        if rc["rival_id"] in defeated_ids:
+            continue
         await ensure_rival_territory(session_id, rc["rival_id"], rc["x"], rc["y"])
     return data

@@ -1,4 +1,31 @@
-from app.services import map_service, territory_service
+from sqlalchemy import select
+
+from app.db import async_session_maker
+from app.models.rival_nation import RivalNation
+from app.services import diplomacy_service, map_service, territory_service
+
+
+async def test_get_or_create_map_does_not_resurrect_a_defeated_rivals_territory(session_id):
+    # Regression test: a rival reduced to 0 tiles by elimination used to get a fresh
+    # 3x3 block re-seeded the very next time the map was fetched, because
+    # ensure_rival_territory's only signal was "do they currently own zero tiles" —
+    # indistinguishable from "never started". Found via an 11-in-game-year playtest.
+    data = await map_service.get_or_create_map(session_id)
+    rival_id = data["rival_capitals"][0]["rival_id"]
+
+    await diplomacy_service.get_rivals(session_id)  # ensure the RivalNation rows exist
+    async with async_session_maker() as db:
+        result = await db.execute(
+            select(RivalNation).where(RivalNation.session_id == session_id, RivalNation.rival_id == rival_id)
+        )
+        rival = result.scalar_one()
+        rival.relationship = "defeated"
+        await db.commit()
+    await territory_service.delete_territory(session_id)  # simulate having been captured down to 0 tiles
+
+    await map_service.get_or_create_map(session_id)  # the "every month" re-fetch that used to resurrect them
+    owned = await territory_service.get_owned_tiles(session_id, owner=rival_id)
+    assert owned == []
 
 
 async def test_get_or_create_map_is_idempotent_and_seeds_territory(session_id):
@@ -54,6 +81,31 @@ async def test_resources_are_placed_on_matching_terrain_and_avoid_capitals(sessi
         assert (res["x"], res["y"]) not in capital_spots
         terrain = data["tiles"][res["y"]][res["x"]]
         assert terrain in map_service.RESOURCE_TYPES[res["type"]]["terrain"]
+
+
+async def test_resources_are_placed_in_clusters_not_scattered_singles():
+    # Aggregate across several generated maps rather than asserting on one — cluster
+    # placement is stochastic (a cluster center can land somewhere with few eligible
+    # neighboring tiles), so a single unlucky map shouldn't fail this.
+    total = 0
+    clustered = 0
+    for i in range(8):
+        data = await map_service.get_or_create_map(f"cluster-test-{i}")
+        resources = data["resources"]
+        assert len(resources) <= map_service.RESOURCE_CLUSTER_COUNT * map_service.RESOURCE_CLUSTER_MAX_SIZE
+        for r in resources:
+            total += 1
+            has_neighbor = any(
+                r is not other
+                and max(abs(r["x"] - other["x"]), abs(r["y"] - other["y"]))
+                <= map_service.RESOURCE_CLUSTER_SEARCH_RADIUS * 2
+                for other in resources
+            )
+            if has_neighbor:
+                clustered += 1
+
+    assert total > 0
+    assert clustered / total >= 0.5
 
 
 async def test_rival_capitals_are_within_bounds_and_each_seeded(session_id):

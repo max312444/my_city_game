@@ -156,3 +156,53 @@ async def test_can_research_a_deep_chain_all_the_way_to_a_tier4_tech(session_id)
 
     state = await tech_service.get_research_state(session_id)
     assert set(chain) <= set(state["researched"])
+
+
+async def test_can_research_all_the_way_to_the_industrialization_capstone(session_id):
+    # Exercises the 3rd-round expansion (chemistry/economics/military_academy/
+    # civil_engineering/steam_engine/rifling/public_education/industrialization) —
+    # industrialization needs all three tier-6 nodes, each fed by a different tier-4/5
+    # branch, so this walks the whole tree end to end.
+    await nation_service.get_or_create_nation(session_id)
+    await _give_treasury(session_id, 10_000_000)
+
+    chain = [
+        "agriculture",
+        "irrigation",
+        "writing_system",
+        "bronze_weapons",
+        "code_of_law",
+        "currency",
+        "iron_weapons",
+        "horseback_riding",
+        "road_network",
+        "fortification",
+        "bureaucracy",
+        "astronomy",
+        "philosophy",
+        "university",  # needs philosophy+astronomy, both done just above
+        "trade_routes",
+        "cavalry_tactics",
+        "banking",
+        "steel_weapons",
+        "printing_press",
+        "gunpowder",
+        "chemistry",
+        "economics",
+        "military_academy",
+        "civil_engineering",
+        "steam_engine",
+        "rifling",
+        "public_education",
+        "industrialization",
+    ]
+    for tech_id in chain:
+        nation, _ = await tech_service.start_research(session_id, tech_id)
+        duration = tech_service.TECH_BY_ID[tech_id]["duration_months"]
+        for _ in range(duration):
+            nation, completed = await tech_service.advance_research(session_id)
+        assert completed == tech_id
+
+    state = await tech_service.get_research_state(session_id)
+    assert "industrialization" in state["researched"]
+    assert len(state["researched"]) == len(tech_service.TECH_TREE)  # every node researched
